@@ -14,7 +14,10 @@ except ImportError:
 
 # If your API runs on another device, replace localhost with that device's LAN IP.
 API_BASE_URL = "http://192.168.26.249:8000/v1/laps?session_key=latest"
-TRACKED_DRIVERS = [44, 81, 3]  # HAM, PIA, VER
+SESSION_RESULT_URL = "http://192.168.26.249:8000/v1/session_result?session_key=latest"
+DEFAULT_TRACKED_DRIVERS = [44, 81, 3]  # fallback if startup ranking fetch fails
+TRACKED_DRIVERS = list(DEFAULT_TRACKED_DRIVERS)
+TRACKED_DRIVER_COUNT = 3
 
 from secrets import WIFI_SSID, WIFI_PASSWORD, WIFI_COUNTRY
 
@@ -92,6 +95,134 @@ def format_driver_code(driver_number):
 def api_url_for_driver(driver_number):
     return API_BASE_URL + "&driver_number={}".format(driver_number)
 
+
+
+def to_int(value):
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def driver_number_from_result_entry(entry):
+    if isinstance(entry, (int, float, str)):
+        return to_int(entry)
+    if not isinstance(entry, dict):
+        return None
+
+    raw_driver = entry.get("driver_number")
+    if raw_driver is None:
+        raw_driver = entry.get("driverNumber")
+    if raw_driver is None:
+        raw_driver = entry.get("number")
+    if raw_driver is None:
+        raw_driver = entry.get("driver")
+
+    if isinstance(raw_driver, dict):
+        nested = raw_driver.get("driver_number")
+        if nested is None:
+            nested = raw_driver.get("driverNumber")
+        if nested is None:
+            nested = raw_driver.get("number")
+        if nested is None:
+            nested = raw_driver.get("id")
+        raw_driver = nested
+
+    return to_int(raw_driver)
+
+
+def position_from_result_entry(entry, fallback_position):
+    if not isinstance(entry, dict):
+        return fallback_position
+
+    for key in (
+        "position",
+        "pos",
+        "rank",
+        "classification_position",
+        "final_position",
+        "placement",
+        "order",
+    ):
+        value = to_int(entry.get(key))
+        if value is not None:
+            return value
+    return fallback_position
+
+
+def result_entries_from_payload(payload):
+    if isinstance(payload, list):
+        return payload
+
+    if isinstance(payload, dict):
+        for key in (
+            "results",
+            "data",
+            "session_result",
+            "session_results",
+            "classification",
+            "items",
+            "drivers",
+        ):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+        return [payload]
+
+    return []
+
+
+def top_drivers_from_session_payload(payload, limit=TRACKED_DRIVER_COUNT):
+    entries = result_entries_from_payload(payload)
+    ranked = []
+
+    for idx, entry in enumerate(entries):
+        driver_number = driver_number_from_result_entry(entry)
+        if driver_number is None:
+            continue
+        position = position_from_result_entry(entry, idx + 1)
+        ranked.append((position, idx, driver_number))
+
+    if not ranked:
+        raise RuntimeError("No drivers in session_result")
+
+    ranked.sort()
+    top_drivers = []
+    seen = set()
+    for _position, _idx, driver_number in ranked:
+        if driver_number in seen:
+            continue
+        seen.add(driver_number)
+        top_drivers.append(driver_number)
+        if len(top_drivers) >= limit:
+            break
+
+    for driver_number in DEFAULT_TRACKED_DRIVERS:
+        if len(top_drivers) >= limit:
+            break
+        if driver_number not in seen:
+            seen.add(driver_number)
+            top_drivers.append(driver_number)
+
+    if not top_drivers:
+        raise RuntimeError("No usable drivers in session_result")
+
+    return top_drivers[:limit]
+
+
+def fetch_top_session_drivers(limit=TRACKED_DRIVER_COUNT):
+    response = None
+    gc.collect()
+    try:
+        response = urequests.get(SESSION_RESULT_URL)
+        if response.status_code != 200:
+            raise RuntimeError("HTTP {}".format(response.status_code))
+        payload = json.loads(response.text)
+        return top_drivers_from_session_payload(payload, limit)
+    finally:
+        if response is not None:
+            response.close()
+        gc.collect()
 
 
 def draw_lines(lines, color=WHITE):
@@ -454,6 +585,13 @@ def main():
         except Exception as exc:
             draw_lines(["Wi-Fi error", "try #{}".format(wifi_attempt), str(exc)], RED)
             time.sleep(5)
+
+    try:
+        TRACKED_DRIVERS[:] = fetch_top_session_drivers(TRACKED_DRIVER_COUNT)
+    except Exception as exc:
+        TRACKED_DRIVERS[:] = list(DEFAULT_TRACKED_DRIVERS)
+        draw_lines(["Session result error", str(exc)], RED)
+        time.sleep(1.5)
 
     last_lap_results = None
 
