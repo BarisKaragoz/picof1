@@ -23,6 +23,9 @@ STARTUP_DELAY_SECONDS = 1.5
 HTTP_READ_CHUNK_BYTES = 256
 HTTP_TAIL_BYTES = 4096
 DISPLAY_BRIGHTNESS = 0.4
+BUTTON_POLL_SECONDS = 0.02
+BUTTON_RELEASE_POLL_SECONDS = 0.01
+BUTTON_RELEASE_DEBOUNCE_SECONDS = 0.03
 
 DRIVER_CODES = {
     1: "NOR",
@@ -104,16 +107,17 @@ def draw_lines(lines, color=WHITE):
     display.update()
 
 
-def wait_for_release():
-    """Block until all buttons are released."""
+def wait_for_release(debounce_seconds=BUTTON_RELEASE_DEBOUNCE_SECONDS):
+    """Block until all buttons are released, with a short debounce."""
     while (BUTTON_A.read() or BUTTON_B.read() or
            BUTTON_X.read() or BUTTON_Y.read()):
-        time.sleep(0.05)
-    time.sleep(0.1)  # extra debounce
+        time.sleep(BUTTON_RELEASE_POLL_SECONDS)
+    if debounce_seconds > 0:
+        time.sleep(debounce_seconds)
 
 
 def pick_from_list(title, items, format_fn):
-    """Show a scrollable list and return the selected index."""
+    """Show a scrollable list and return selected index, or None on cancel."""
     cursor = 0
     count = len(items)
     window_start = 0
@@ -150,6 +154,9 @@ def pick_from_list(title, items, format_fn):
 
         # Wait for a button press
         while True:
+            if BUTTON_A.read():
+                wait_for_release()
+                return None
             if BUTTON_X.read():
                 cursor = (cursor - 1) % count
                 wait_for_release()
@@ -161,11 +168,11 @@ def pick_from_list(title, items, format_fn):
             if BUTTON_B.read():
                 wait_for_release()
                 return cursor
-            time.sleep(0.05)
+            time.sleep(BUTTON_POLL_SECONDS)
 
 
 def select_driver_interactive():
-    """Two-step interactive driver selection: pick new driver, then pick slot."""
+    """Two-step interactive driver selection; A cancels back to main screen."""
     all_numbers = sorted(DRIVER_CODES.keys())
 
     new_idx = pick_from_list(
@@ -173,6 +180,8 @@ def select_driver_interactive():
         all_numbers,
         lambda n: "{} #{}".format(DRIVER_CODES[n], n),
     )
+    if new_idx is None:
+        return False
     new_driver = all_numbers[new_idx]
 
     slot_idx = pick_from_list(
@@ -180,7 +189,31 @@ def select_driver_interactive():
         TRACKED_DRIVERS,
         lambda n: "{} #{}".format(format_driver_code(n), n),
     )
+    if slot_idx is None:
+        return False
     TRACKED_DRIVERS[slot_idx] = new_driver
+    return True
+
+
+def build_lap_lines(lap_results):
+    lines = ["Latest lap times"]
+    for dn in TRACKED_DRIVERS:
+        duration = lap_results.get(dn)
+        if duration is not None:
+            lines.append("{} {}".format(
+                format_driver_code(dn),
+                format_lap_duration(duration),
+            ))
+        else:
+            lines.append("{} --:--.---".format(format_driver_code(dn)))
+    return lines
+
+
+def draw_cached_main_screen(lap_results):
+    if lap_results is not None:
+        draw_lines(build_lap_lines(lap_results), GREEN)
+    else:
+        draw_lines(build_lap_lines({}), CYAN)
 
 
 def connect_wifi(ssid, password, timeout_seconds=20):
@@ -438,30 +471,25 @@ def main():
                     lap_results[dn] = None
 
             if lap_results != last_lap_results:
-                lines = ["Latest lap times"]
-                for dn in TRACKED_DRIVERS:
-                    duration = lap_results.get(dn)
-                    if duration is not None:
-                        lines.append("{} {}".format(
-                            format_driver_code(dn),
-                            format_lap_duration(duration),
-                        ))
-                    else:
-                        lines.append("{} --:--.---".format(format_driver_code(dn)))
-                draw_lines(lines, GREEN)
+                draw_lines(build_lap_lines(lap_results), GREEN)
                 last_lap_results = lap_results
         except Exception as exc:
             draw_lines(["Fetch error", str(exc)], RED)
 
         # Sleep in short steps so Button A stays responsive.
-        poll_remaining = int(POLL_INTERVAL_SECONDS * 20)
+        poll_remaining = int(POLL_INTERVAL_SECONDS / BUTTON_POLL_SECONDS)
         while poll_remaining > 0:
             if BUTTON_A.read():
                 wait_for_release()
-                select_driver_interactive()
-                last_lap_results = None
-                break
-            time.sleep(0.05)
+                selection_changed = select_driver_interactive()
+                if selection_changed and last_lap_results is not None:
+                    last_lap_results = {dn: last_lap_results.get(dn) for dn in TRACKED_DRIVERS}
+                draw_cached_main_screen(last_lap_results)
+                # After returning from selection, keep polling inputs instead
+                # of jumping immediately into network fetches.
+                poll_remaining = int(POLL_INTERVAL_SECONDS / BUTTON_POLL_SECONDS)
+                continue
+            time.sleep(BUTTON_POLL_SECONDS)
             poll_remaining -= 1
 
 
