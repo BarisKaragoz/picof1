@@ -12,7 +12,8 @@ except ImportError:
 
 
 # If your API runs on another device, replace localhost with that device's LAN IP.
-API_URL = "http://192.168.26.249:8000/v1/laps?session_key=latest&driver_number=44"
+API_BASE_URL = "http://192.168.26.249:8000/v1/laps?session_key=latest"
+TRACKED_DRIVERS = [44, 81, 3]  # HAM, PIA, VER
 
 from secrets import WIFI_SSID, WIFI_PASSWORD, WIFI_COUNTRY
 
@@ -20,6 +21,7 @@ POLL_INTERVAL_SECONDS = 5
 STARTUP_DELAY_SECONDS = 1.5
 HTTP_READ_CHUNK_BYTES = 256
 HTTP_TAIL_BYTES = 4096
+DISPLAY_BRIGHTNESS = 0.4
 
 DRIVER_CODES = {
     1: "NOR",
@@ -52,6 +54,11 @@ if DISPLAY_TYPE is None:
     DISPLAY_TYPE = pg.DISPLAY_PICO_DISPLAY
 
 display = pg.PicoGraphics(display=DISPLAY_TYPE)
+try:
+    display.set_backlight(DISPLAY_BRIGHTNESS)
+except Exception:
+    pass
+
 WIDTH, HEIGHT = display.get_bounds()
 
 BLACK = display.create_pen(0, 0, 0)
@@ -59,24 +66,6 @@ WHITE = display.create_pen(255, 255, 255)
 GREEN = display.create_pen(80, 240, 120)
 RED = display.create_pen(255, 80, 80)
 CYAN = display.create_pen(80, 220, 255)
-
-
-def extract_driver_number_from_api_url(url):
-    marker = "driver_number="
-    index = url.find(marker)
-    if index < 0:
-        return None
-
-    index += len(marker)
-    end = url.find("&", index)
-    if end < 0:
-        end = len(url)
-
-    raw_value = url[index:end]
-    try:
-        return int(raw_value)
-    except Exception:
-        return raw_value
 
 
 def format_driver_code(driver_number):
@@ -91,7 +80,8 @@ def format_driver_code(driver_number):
     return DRIVER_CODES.get(driver_number, str(driver_number))
 
 
-DEFAULT_DRIVER_NUMBER = extract_driver_number_from_api_url(API_URL)
+def api_url_for_driver(driver_number):
+    return API_BASE_URL + "&driver_number={}".format(driver_number)
 
 
 
@@ -247,22 +237,21 @@ def lap_from_tail_json(tail_text):
             end = start
             continue
 
-        lap_duration, lap_number, driver_number = lap_from_payload(candidate)
+        lap_duration, lap_number, dn = lap_from_payload(candidate)
         if lap_duration is not None:
-            if driver_number is None:
-                driver_number = DEFAULT_DRIVER_NUMBER
-            return lap_duration, lap_number, driver_number
+            return lap_duration, lap_number, dn
 
         end = start
 
     raise RuntimeError("No lap_duration values yet")
 
 
-def fetch_latest_lap_duration():
+def fetch_latest_lap_duration(driver_number):
+    url = api_url_for_driver(driver_number)
     response = None
     gc.collect()
     try:
-        response = urequests.get(API_URL)
+        response = urequests.get(url)
         if response.status_code != 200:
             raise RuntimeError("HTTP {}".format(response.status_code))
 
@@ -270,10 +259,8 @@ def fetch_latest_lap_duration():
         if raw_stream is None:
             # Fallback for unusual urequests implementations.
             payload = json.loads(response.text)
-            lap_duration, lap_number, driver_number = lap_from_payload(payload)
+            lap_duration, lap_number, dn = lap_from_payload(payload)
             if lap_duration is not None:
-                if driver_number is None:
-                    driver_number = DEFAULT_DRIVER_NUMBER
                 return lap_duration, lap_number, driver_number
             raise RuntimeError("No lap_duration values yet")
 
@@ -303,13 +290,12 @@ def fetch_latest_lap_duration():
         payload = None
 
     if payload is not None:
-        lap_duration, lap_number, driver_number = lap_from_payload(payload)
+        lap_duration, lap_number, dn = lap_from_payload(payload)
         if lap_duration is not None:
-            if driver_number is None:
-                driver_number = DEFAULT_DRIVER_NUMBER
             return lap_duration, lap_number, driver_number
 
-    return lap_from_tail_json(tail_text)
+    lap_duration, lap_number, _ = lap_from_tail_json(tail_text)
+    return lap_duration, lap_number, driver_number
 
 
 def format_lap_duration(value):
@@ -351,25 +337,34 @@ def main():
             draw_lines(["Wi-Fi error", "try #{}".format(wifi_attempt), str(exc)], RED)
             time.sleep(5)
 
-    last_lap_key = None
+    last_lap_results = None
 
     while True:
         try:
             if not wlan.isconnected():
                 wlan = connect_wifi(WIFI_SSID, WIFI_PASSWORD)
 
-            lap_duration, _lap_number, driver_number = fetch_latest_lap_duration()
-            lap_key = (lap_duration, driver_number)
-            if lap_key != last_lap_key:
-                lines = [
-                    "Latest lap times",
-                    "{} - {}".format(
-                        format_driver_code(driver_number),
-                        format_lap_duration(lap_duration),
-                    )
-                ]
+            lap_results = {}
+            for dn in TRACKED_DRIVERS:
+                try:
+                    lap_duration, _lap_number, _ = fetch_latest_lap_duration(dn)
+                    lap_results[dn] = lap_duration
+                except Exception:
+                    lap_results[dn] = None
+
+            if lap_results != last_lap_results:
+                lines = ["Latest lap times"]
+                for dn in TRACKED_DRIVERS:
+                    duration = lap_results.get(dn)
+                    if duration is not None:
+                        lines.append("{} {}".format(
+                            format_driver_code(dn),
+                            format_lap_duration(duration),
+                        ))
+                    else:
+                        lines.append("{} --:--.---".format(format_driver_code(dn)))
                 draw_lines(lines, GREEN)
-                last_lap_key = lap_key
+                last_lap_results = lap_results
         except Exception as exc:
             draw_lines(["Fetch error", str(exc)], RED)
 
