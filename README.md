@@ -1,18 +1,20 @@
 # Pico F1 Lap Display
 
-MicroPython app for Raspberry Pi Pico W + Pico Display that connects to Wi-Fi, polls a lap-time API, and renders the latest lap on screen.
+MicroPython app for Raspberry Pi Pico W + Pico Display that connects to Wi-Fi, loads top drivers from session results on cold boot, polls a lap-time API, and renders the latest laps on screen.
 
 Example display line:
 
-`HAM - 01:37.154`
+`HAM 01:37.154`
 
 ## What It Does
 
 - Connects to Wi-Fi with retry and status feedback.
+- On cold boot, fetches top 3 drivers from the session-result endpoint.
 - Polls an API endpoint every 5 seconds.
 - Parses both JSON list and single-object payloads.
 - Uses memory-conscious tail parsing for larger responses.
 - Displays fetch/network errors without crashing.
+- Lets you edit tracked drivers on-device via buttons.
 
 ## Project Layout
 
@@ -43,13 +45,23 @@ WIFI_PASSWORD = "YOUR_WIFI_PASSWORD"
 WIFI_COUNTRY = "US"  # Optional country code
 ```
 
-2. Edit `API_URL` in `main.py` to your lap API endpoint.
+2. Edit API endpoints in `main.py`:
 
-Current expected fields:
+- `API_BASE_URL`: lap endpoint (default: `/v1/laps?session_key=latest`)
+- `SESSION_RESULT_URL`: session-result endpoint (default: `/v1/session_result?session_key=latest`)
+
+3. Optional: edit fallback startup drivers in `DEFAULT_TRACKED_DRIVERS`.
+
+Lap endpoint expected fields:
 
 - `lap_duration` (required)
 - `driver_number` (optional, falls back to URL `driver_number`)
 - `lap_number` (optional)
+
+Session-result endpoint expected fields:
+
+- A list payload, or a dict containing a list (for example `results`, `data`, `classification`).
+- Each entry should include a driver number (`driver_number`, `driverNumber`, `number`, or nested `driver`) and preferably a position (`position`, `pos`, `rank`, etc.).
 
 ## Local Validation
 
@@ -78,15 +90,24 @@ python3 -m py_compile main.py
 ## Behavior Notes
 
 - Startup shows `Booting...` and network status.
+- After Wi-Fi connects, startup attempts to load top 3 drivers from `SESSION_RESULT_URL`.
 - Wi-Fi connection is retried until successful.
+- If session-result fetch fails, fallback drivers are used.
 - API or parse errors are shown as `Fetch error` and the loop continues.
-- The display updates only when lap value/driver changes.
+- Main screen button controls:
+  - `A`: open driver selection
+- Driver selection controls:
+  - `X`/`Y`: move up/down
+  - `B`: confirm/select
+  - `A`: cancel and go back to main screen
+- The display updates only when lap values or tracked drivers change.
 
 ## Troubleshooting
 
 - Device has no Wi-Fi: Raspberry Pi Pico (non-W) is not supported for this project.
 - `SSID not found (2.4GHz?)`: Ensure the network is 2.4GHz and in range.
-- `HTTP <code>`: Check API URL, server status, and network route from Pico.
+- `Session result error`: Check `SESSION_RESULT_URL`, server status, and response payload shape.
+- `HTTP <code>`: Check `API_BASE_URL`, server status, and network route from Pico.
 - `No lap_duration values yet`: API response is valid but missing expected data.
 - `No lap data`: Endpoint returned an empty payload.
 
