@@ -3,6 +3,7 @@ import time
 import gc
 import network
 import picographics as pg # type: ignore
+from pimoroni import Button  # type: ignore
 import urequests
 
 try:
@@ -64,6 +65,14 @@ GREEN = display.create_pen(80, 240, 120)
 RED = display.create_pen(255, 80, 80)
 CYAN = display.create_pen(80, 220, 255)
 
+BUTTON_A = Button(12)
+BUTTON_B = Button(13)
+BUTTON_X = Button(14)
+BUTTON_Y = Button(15)
+
+ROW_HEIGHT = 28
+VISIBLE_ROWS = (HEIGHT - 12) // ROW_HEIGHT - 1  # minus title row
+
 
 def format_driver_code(driver_number):
     if driver_number is None:
@@ -93,6 +102,85 @@ def draw_lines(lines, color=WHITE):
         y += 28
 
     display.update()
+
+
+def wait_for_release():
+    """Block until all buttons are released."""
+    while (BUTTON_A.read() or BUTTON_B.read() or
+           BUTTON_X.read() or BUTTON_Y.read()):
+        time.sleep(0.05)
+    time.sleep(0.1)  # extra debounce
+
+
+def pick_from_list(title, items, format_fn):
+    """Show a scrollable list and return the selected index."""
+    cursor = 0
+    count = len(items)
+    window_start = 0
+
+    while True:
+        # Keep cursor visible within the window
+        if cursor < window_start:
+            window_start = cursor
+        if cursor >= window_start + VISIBLE_ROWS:
+            window_start = cursor - VISIBLE_ROWS + 1
+
+        display.set_pen(BLACK)
+        display.clear()
+
+        # Title
+        display.set_pen(WHITE)
+        display.text(title, 8, 12, WIDTH - 16, 2)
+
+        # List items
+        for i in range(VISIBLE_ROWS):
+            idx = window_start + i
+            if idx >= count:
+                break
+            label = format_fn(items[idx])
+            y = 12 + (i + 1) * ROW_HEIGHT
+            if idx == cursor:
+                display.set_pen(CYAN)
+                display.text("> {}".format(label), 8, y, WIDTH - 16, 2)
+            else:
+                display.set_pen(WHITE)
+                display.text("  {}".format(label), 8, y, WIDTH - 16, 2)
+
+        display.update()
+
+        # Wait for a button press
+        while True:
+            if BUTTON_X.read():
+                cursor = (cursor - 1) % count
+                wait_for_release()
+                break
+            if BUTTON_Y.read():
+                cursor = (cursor + 1) % count
+                wait_for_release()
+                break
+            if BUTTON_B.read():
+                wait_for_release()
+                return cursor
+            time.sleep(0.05)
+
+
+def select_driver_interactive():
+    """Two-step interactive driver selection: pick new driver, then pick slot."""
+    all_numbers = sorted(DRIVER_CODES.keys())
+
+    new_idx = pick_from_list(
+        "Pick driver",
+        all_numbers,
+        lambda n: "{} #{}".format(DRIVER_CODES[n], n),
+    )
+    new_driver = all_numbers[new_idx]
+
+    slot_idx = pick_from_list(
+        "Replace who?",
+        TRACKED_DRIVERS,
+        lambda n: "{} #{}".format(format_driver_code(n), n),
+    )
+    TRACKED_DRIVERS[slot_idx] = new_driver
 
 
 def connect_wifi(ssid, password, timeout_seconds=20):
@@ -365,7 +453,16 @@ def main():
         except Exception as exc:
             draw_lines(["Fetch error", str(exc)], RED)
 
-        time.sleep(POLL_INTERVAL_SECONDS)
+        # Sleep in short steps so Button A stays responsive.
+        poll_remaining = int(POLL_INTERVAL_SECONDS * 20)
+        while poll_remaining > 0:
+            if BUTTON_A.read():
+                wait_for_release()
+                select_driver_interactive()
+                last_lap_results = None
+                break
+            time.sleep(0.05)
+            poll_remaining -= 1
 
 
 main()
