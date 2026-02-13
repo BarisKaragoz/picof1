@@ -19,7 +19,7 @@ Example display line:
 ## Project Layout
 
 - `main.py`: Main application entrypoint.
-- `secrets.py`: Local Wi-Fi settings (ignored by git).
+- `secrets.py`: Local Wi-Fi + API settings (ignored by git).
 - `.micropico`: MicroPico project marker.
 - `.vscode/`: Workspace settings.
 
@@ -43,12 +43,13 @@ Example display line:
 WIFI_SSID = "YOUR_WIFI_SSID"
 WIFI_PASSWORD = "YOUR_WIFI_PASSWORD"
 WIFI_COUNTRY = "US"  # Optional country code
+API_BASE_URL = "http://example.com"  # Base URL or IP (no trailing slash needed)
 ```
 
-2. Edit API endpoints in `main.py`:
+2. Endpoints are built automatically from `API_BASE_URL`:
 
-- `API_BASE_URL`: lap endpoint (default: `/v1/laps?session_key=latest`)
-- `SESSION_RESULT_URL`: session-result endpoint (default: `/v1/session_result?session_key=latest`)
+- Lap endpoint: `/v1/laps?session_key=latest`
+- Session-result endpoint: `/v1/session_result?session_key=latest`
 
 3. Optional: edit fallback startup drivers in `DEFAULT_TRACKED_DRIVERS`.
 

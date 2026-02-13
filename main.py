@@ -12,14 +12,21 @@ except ImportError:
     import json
 
 
-# If your API runs on another device, replace localhost with that device's LAN IP.
-API_BASE_URL = "http://192.168.26.249:8000/v1/laps?session_key=latest"
-SESSION_RESULT_URL = "http://192.168.26.249:8000/v1/session_result?session_key=latest"
 DEFAULT_TRACKED_DRIVERS = [44, 81, 3]  # fallback if startup ranking fetch fails
 TRACKED_DRIVERS = list(DEFAULT_TRACKED_DRIVERS)
 TRACKED_DRIVER_COUNT = 3
 
 from secrets import WIFI_SSID, WIFI_PASSWORD, WIFI_COUNTRY
+
+try:
+    from secrets import API_BASE_URL
+except ImportError:
+    API_BASE_URL = "http://192.168.26.249:8000"
+
+# Set API_BASE_URL in secrets.py (example: http://example.com).
+BASE_URL = API_BASE_URL.rstrip("/")
+LAPS_BASE_URL = BASE_URL + "/v1/laps?session_key=latest"
+SESSION_RESULT_URL = BASE_URL + "/v1/session_result?session_key=latest"
 
 POLL_INTERVAL_SECONDS = 5
 STARTUP_DELAY_SECONDS = 1.5
@@ -93,7 +100,7 @@ def format_driver_code(driver_number):
 
 
 def api_url_for_driver(driver_number):
-    return API_BASE_URL + "&driver_number={}".format(driver_number)
+    return LAPS_BASE_URL + "&driver_number={}".format(driver_number)
 
 
 
