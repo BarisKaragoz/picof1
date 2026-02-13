@@ -1,6 +1,6 @@
 # Pico F1 Lap Display
 
-MicroPython app for Raspberry Pi Pico + Pico Display that connects to Wi-Fi, polls a lap-time API, and renders the latest lap on screen.
+MicroPython app for Raspberry Pi Pico W + Pico Display that connects to Wi-Fi, polls a lap-time API, and renders the latest lap on screen.
 
 Example display line:
 
@@ -23,13 +23,15 @@ Example display line:
 
 ## Requirements
 
-- Raspberry Pi Pico / Pico W
+- Raspberry Pi Pico W (required)
 - Pico-compatible display supported by `picographics`
 - MicroPython firmware with:
   - `network`
   - `urequests`
   - `picographics`
-- `mpremote` installed on your workstation (optional but recommended)
+- One of:
+  - Thonny
+  - VS Code with a Pi Pico extension (for example MicroPico)
 
 ## Configuration
 
@@ -57,19 +59,21 @@ Run a fast syntax check before deploying:
 python3 -m py_compile main.py
 ```
 
-## Deploy and Run on Pico
+## Upload and Run on Pico W (Thonny)
 
-```bash
-mpremote fs cp main.py :main.py
-mpremote fs cp secrets.py :secrets.py
-mpremote run main.py
-```
+1. Connect the Pico W board over USB.
+2. Open `main.py` and `secrets.py` in Thonny.
+3. Select interpreter: `MicroPython (Raspberry Pi Pico)`.
+4. Save both files to the Pico filesystem as `main.py` and `secrets.py`.
+5. Run `main.py` from Thonny.
 
-To restart the board:
+## Upload and Run on Pico W (VS Code + Pi Pico Extension)
 
-```bash
-mpremote soft-reset
-```
+1. Connect the Pico W board over USB.
+2. Open this project folder in VS Code.
+3. Use your Pi Pico extension to connect to the board.
+4. Upload `main.py` and `secrets.py` to the device root.
+5. Run or reset the device from the extension controls.
 
 ## Behavior Notes
 
@@ -80,6 +84,7 @@ mpremote soft-reset
 
 ## Troubleshooting
 
+- Device has no Wi-Fi: Raspberry Pi Pico (non-W) is not supported for this project.
 - `SSID not found (2.4GHz?)`: Ensure the network is 2.4GHz and in range.
 - `HTTP <code>`: Check API URL, server status, and network route from Pico.
 - `No lap_duration values yet`: API response is valid but missing expected data.
