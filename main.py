@@ -54,10 +54,7 @@ if DISPLAY_TYPE is None:
     DISPLAY_TYPE = pg.DISPLAY_PICO_DISPLAY
 
 display = pg.PicoGraphics(display=DISPLAY_TYPE)
-try:
-    display.set_backlight(DISPLAY_BRIGHTNESS)
-except Exception:
-    pass
+display.set_backlight(DISPLAY_BRIGHTNESS)
 
 WIDTH, HEIGHT = display.get_bounds()
 
