@@ -4,7 +4,7 @@ MicroPython app for Raspberry Pi Pico W + Pico Display that connects to Wi-Fi, l
 
 Example display line:
 
-`HAM 01:37.154`
+`HAM 01:37.154 lap 12`
 
 ## What It Does
 
@@ -13,6 +13,7 @@ Example display line:
 - Polls an API endpoint every 5 seconds.
 - Parses both JSON list and single-object payloads.
 - Uses memory-conscious tail parsing for larger responses.
+- Renders driver, lap time, and lap number in aligned columns.
 - Displays fetch/network errors without crashing.
 - Lets you edit tracked drivers on-device via buttons.
 
@@ -57,7 +58,7 @@ Lap endpoint expected fields:
 
 - `lap_duration` (required)
 - `driver_number` (optional, falls back to URL `driver_number`)
-- `lap_number` (optional)
+- `lap_number` (optional; shown as `lap --` when missing)
 
 Session-result endpoint expected fields:
 
@@ -101,7 +102,7 @@ python3 -m py_compile main.py
   - `X`/`Y`: move up/down
   - `B`: confirm/select
   - `A`: cancel and go back to main screen
-- The display updates only when lap values or tracked drivers change.
+- The display updates only when lap values, lap numbers, or tracked drivers change.
 
 ## Troubleshooting
 
