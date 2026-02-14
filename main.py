@@ -360,27 +360,33 @@ def draw_lap_screen(lap_results, color=WHITE):
 
     left_margin = 8
     right_margin = 8
-    col_gap = 6
+    driver_gap = 8
+    lap_gap = 6
 
     driver_col_width = text_pixel_width("WWW", 2)
+    for driver_code, _duration_text, _lap_text in rows:
+        code_width = text_pixel_width(driver_code, 2)
+        if code_width > driver_col_width:
+            driver_col_width = code_width
+
     duration_col_width = text_pixel_width("88:88.888", 2)
     lap_col_width = text_pixel_width("lap 88", 2)
 
-    duration_x = left_margin + driver_col_width + col_gap
-    lap_x = duration_x + duration_col_width + col_gap
+    duration_x = left_margin + driver_col_width + driver_gap
+    lap_x = duration_x + duration_col_width + lap_gap
 
     # Keep everything on-screen on narrower displays.
     max_lap_x = WIDTH - right_margin - lap_col_width
     if lap_x > max_lap_x:
         lap_x = max_lap_x
-        duration_x = lap_x - col_gap - duration_col_width
+        duration_x = lap_x - lap_gap - duration_col_width
 
     min_duration_x = left_margin + driver_col_width + 2
     if duration_x < min_duration_x:
         duration_x = min_duration_x
 
-    driver_wrap = max(1, duration_x - left_margin - col_gap)
-    duration_wrap = max(1, lap_x - duration_x - col_gap)
+    driver_wrap = max(1, duration_x - left_margin - driver_gap)
+    duration_wrap = max(1, lap_x - duration_x - lap_gap)
     lap_wrap = max(1, WIDTH - lap_x - right_margin)
 
     display.set_pen(BLACK)
