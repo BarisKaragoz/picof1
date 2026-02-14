@@ -333,25 +333,76 @@ def select_driver_interactive():
     return True
 
 
-def build_lap_lines(lap_results):
-    lines = ["Latest lap times"]
+def build_lap_rows(lap_results):
+    rows = []
     for dn in TRACKED_DRIVERS:
-        duration = lap_results.get(dn)
-        if duration is not None:
-            lines.append("{} {}".format(
-                format_driver_code(dn),
-                format_lap_duration(duration),
-            ))
+        lap_result = lap_results.get(dn)
+        if lap_result is not None:
+            duration, lap_number = lap_result
+            duration_text = format_lap_duration(duration)
+            lap_text = format_lap_number(lap_number)
         else:
-            lines.append("{} --:--.---".format(format_driver_code(dn)))
-    return lines
+            duration_text = "--:--.---"
+            lap_text = "lap --"
+        rows.append((format_driver_code(dn), duration_text, lap_text))
+    return rows
+
+
+def text_pixel_width(text, scale=2):
+    try:
+        return display.measure_text(str(text), scale)
+    except Exception:
+        return len(str(text)) * 8 * scale
+
+
+def draw_lap_screen(lap_results, color=WHITE):
+    rows = build_lap_rows(lap_results)
+
+    left_margin = 8
+    right_margin = 8
+    col_gap = 6
+
+    driver_col_width = text_pixel_width("WWW", 2)
+    duration_col_width = text_pixel_width("88:88.888", 2)
+    lap_col_width = text_pixel_width("lap 88", 2)
+
+    duration_x = left_margin + driver_col_width + col_gap
+    lap_x = duration_x + duration_col_width + col_gap
+
+    # Keep everything on-screen on narrower displays.
+    max_lap_x = WIDTH - right_margin - lap_col_width
+    if lap_x > max_lap_x:
+        lap_x = max_lap_x
+        duration_x = lap_x - col_gap - duration_col_width
+
+    min_duration_x = left_margin + driver_col_width + 2
+    if duration_x < min_duration_x:
+        duration_x = min_duration_x
+
+    driver_wrap = max(1, duration_x - left_margin - col_gap)
+    duration_wrap = max(1, lap_x - duration_x - col_gap)
+    lap_wrap = max(1, WIDTH - lap_x - right_margin)
+
+    display.set_pen(BLACK)
+    display.clear()
+    display.set_pen(color)
+    display.text("Latest lap times", left_margin, 12, WIDTH - 16, 2)
+
+    y = 12 + ROW_HEIGHT
+    for driver_code, duration_text, lap_text in rows:
+        display.text(driver_code, left_margin, y, driver_wrap, 2)
+        display.text(duration_text, duration_x, y, duration_wrap, 2)
+        display.text(lap_text, lap_x, y, lap_wrap, 2)
+        y += ROW_HEIGHT
+
+    display.update()
 
 
 def draw_cached_main_screen(lap_results):
     if lap_results is not None:
-        draw_lines(build_lap_lines(lap_results), GREEN)
+        draw_lap_screen(lap_results, GREEN)
     else:
-        draw_lines(build_lap_lines({}), CYAN)
+        draw_lap_screen({}, CYAN)
 
 
 def connect_wifi(ssid, password, timeout_seconds=20):
@@ -574,6 +625,15 @@ def format_lap_duration(value):
     return "{:02d}:{:02d}.{:03d}".format(minutes, seconds, millis)
 
 
+def format_lap_number(value):
+    if value is None:
+        return "lap --"
+    try:
+        return "lap {:02d}".format(int(value))
+    except Exception:
+        return "lap {}".format(value)
+
+
 def main():
     draw_lines(["Booting...", "Starting network"], CYAN)
     time.sleep(STARTUP_DELAY_SECONDS)
@@ -610,13 +670,13 @@ def main():
             lap_results = {}
             for dn in TRACKED_DRIVERS:
                 try:
-                    lap_duration, _lap_number, _ = fetch_latest_lap_duration(dn)
-                    lap_results[dn] = lap_duration
+                    lap_duration, lap_number, _ = fetch_latest_lap_duration(dn)
+                    lap_results[dn] = (lap_duration, lap_number)
                 except Exception:
                     lap_results[dn] = None
 
             if lap_results != last_lap_results:
-                draw_lines(build_lap_lines(lap_results), GREEN)
+                draw_lap_screen(lap_results, GREEN)
                 last_lap_results = lap_results
         except Exception as exc:
             draw_lines(["Fetch error", str(exc)], RED)
