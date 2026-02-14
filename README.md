@@ -4,7 +4,7 @@ MicroPython app for Raspberry Pi Pico W + Pico Display that connects to Wi-Fi, l
 
 Example display line:
 
-`HAM 01:37.154 lap 12`
+`HAM 01:37.154 +0.000 lap 12`
 
 ## What It Does
 
@@ -13,7 +13,7 @@ Example display line:
 - Polls an API endpoint every 5 seconds.
 - Parses both JSON list and single-object payloads.
 - Uses memory-conscious tail parsing for larger responses.
-- Renders driver, lap time, and lap number in aligned columns.
+- Renders driver, lap time, gap-to-leader, and lap number in aligned columns.
 - Displays fetch/network errors without crashing.
 - Lets you edit tracked drivers on-device via buttons.
 

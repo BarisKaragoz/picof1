@@ -111,6 +111,13 @@ def to_int(value):
         return None
 
 
+def to_float(value):
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
 def driver_number_from_result_entry(entry):
     if isinstance(entry, (int, float, str)):
         return to_int(entry)
@@ -335,16 +342,24 @@ def select_driver_interactive():
 
 def build_lap_rows(lap_results):
     rows = []
+    leader_duration = None
+    if TRACKED_DRIVERS:
+        leader_result = lap_results.get(TRACKED_DRIVERS[0])
+        if leader_result is not None:
+            leader_duration = to_float(leader_result[0])
+
     for dn in TRACKED_DRIVERS:
         lap_result = lap_results.get(dn)
         if lap_result is not None:
             duration, lap_number = lap_result
             duration_text = format_lap_duration(duration)
+            gap_text = format_gap_to_leader(duration, leader_duration)
             lap_text = format_lap_number(lap_number)
         else:
             duration_text = "--:--.---"
+            gap_text = "+--.---"
             lap_text = "lap --"
-        rows.append((format_driver_code(dn), duration_text, lap_text))
+        rows.append((format_driver_code(dn), duration_text, gap_text, lap_text))
     return rows
 
 
@@ -361,32 +376,44 @@ def draw_lap_screen(lap_results, color=WHITE):
     left_margin = 8
     right_margin = 8
     driver_gap = 8
+    gap_gap = 6
     lap_gap = 6
 
     driver_col_width = text_pixel_width("WWW", 2)
-    for driver_code, _duration_text, _lap_text in rows:
+    for driver_code, _duration_text, _gap_text, _lap_text in rows:
         code_width = text_pixel_width(driver_code, 2)
         if code_width > driver_col_width:
             driver_col_width = code_width
 
     duration_col_width = text_pixel_width("88:88.888", 2)
+    gap_col_width = text_pixel_width("+88.888", 2)
+    for _driver_code, _duration_text, gap_text, _lap_text in rows:
+        gap_width = text_pixel_width(gap_text, 2)
+        if gap_width > gap_col_width:
+            gap_col_width = gap_width
+
     lap_col_width = text_pixel_width("lap 88", 2)
 
     duration_x = left_margin + driver_col_width + driver_gap
-    lap_x = duration_x + duration_col_width + lap_gap
+    gap_x = duration_x + duration_col_width + gap_gap
+    lap_x = gap_x + gap_col_width + lap_gap
 
     # Keep everything on-screen on narrower displays.
     max_lap_x = WIDTH - right_margin - lap_col_width
     if lap_x > max_lap_x:
         lap_x = max_lap_x
-        duration_x = lap_x - lap_gap - duration_col_width
+        gap_x = lap_x - lap_gap - gap_col_width
+        duration_x = gap_x - gap_gap - duration_col_width
 
     min_duration_x = left_margin + driver_col_width + 2
     if duration_x < min_duration_x:
         duration_x = min_duration_x
+        gap_x = duration_x + duration_col_width + gap_gap
+        lap_x = gap_x + gap_col_width + lap_gap
 
     driver_wrap = max(1, duration_x - left_margin - driver_gap)
-    duration_wrap = max(1, lap_x - duration_x - lap_gap)
+    duration_wrap = max(1, gap_x - duration_x - gap_gap)
+    gap_wrap = max(1, lap_x - gap_x - lap_gap)
     lap_wrap = max(1, WIDTH - lap_x - right_margin)
 
     display.set_pen(BLACK)
@@ -395,9 +422,10 @@ def draw_lap_screen(lap_results, color=WHITE):
     display.text("Latest lap times", left_margin, 12, WIDTH - 16, 2)
 
     y = 12 + ROW_HEIGHT
-    for driver_code, duration_text, lap_text in rows:
+    for driver_code, duration_text, gap_text, lap_text in rows:
         display.text(driver_code, left_margin, y, driver_wrap, 2)
         display.text(duration_text, duration_x, y, duration_wrap, 2)
+        display.text(gap_text, gap_x, y, gap_wrap, 2)
         display.text(lap_text, lap_x, y, lap_wrap, 2)
         y += ROW_HEIGHT
 
@@ -629,6 +657,28 @@ def format_lap_duration(value):
         seconds = 0
 
     return "{:02d}:{:02d}.{:03d}".format(minutes, seconds, millis)
+
+
+def format_gap_to_leader(duration, leader_duration):
+    if leader_duration is None:
+        return "+--.---"
+
+    duration_seconds = to_float(duration)
+    if duration_seconds is None:
+        return "+--.---"
+
+    gap_seconds = duration_seconds - leader_duration
+    sign = "+" if gap_seconds >= 0 else "-"
+    gap_seconds = abs(gap_seconds)
+
+    whole_seconds = int(gap_seconds)
+    millis = int(round((gap_seconds - whole_seconds) * 1000))
+
+    if millis == 1000:
+        whole_seconds += 1
+        millis = 0
+
+    return "{}{}.{:03d}".format(sign, whole_seconds, millis)
 
 
 def format_lap_number(value):
