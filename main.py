@@ -430,6 +430,9 @@ def text_pixel_width(text, scale=2):
 
 def draw_lap_screen(lap_results, color=WHITE):
     rows = build_lap_rows(lap_results)
+    # Measure and render lap rows using a fixed font so column spacing
+    # does not depend on whatever screen was shown previously.
+    display.set_font("bitmap8")
 
     left_margin = 8
     right_margin = 8
@@ -501,7 +504,8 @@ def draw_lap_screen(lap_results, color=WHITE):
                     info_x = 0
                 display.text(info_text, info_x, info_y, WIDTH - info_x, info_scale)
                 info_y += info_row_height
-        display.set_font("bitmap8")
+
+    display.set_font("bitmap8")
 
     display.update()
 
