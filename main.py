@@ -517,6 +517,26 @@ def draw_cached_main_screen(lap_results):
         draw_lap_screen({}, CYAN)
 
 
+def handle_home_buttons(last_lap_results):
+    global show_event_info
+
+    if BUTTON_A.read():
+        wait_for_release()
+        selection_changed = select_driver_interactive()
+        if selection_changed and last_lap_results is not None:
+            last_lap_results = {dn: last_lap_results.get(dn) for dn in TRACKED_DRIVERS}
+        draw_cached_main_screen(last_lap_results)
+        return True, last_lap_results
+
+    if BUTTON_B.read():
+        wait_for_release()
+        show_event_info = not show_event_info
+        draw_cached_main_screen(last_lap_results)
+        return True, last_lap_results
+
+    return False, last_lap_results
+
+
 def connect_wifi(ssid, password, timeout_seconds=20):
     if WIFI_COUNTRY:
         try:
@@ -803,17 +823,29 @@ def main():
     last_lap_results = None
 
     while True:
+        handled_button, last_lap_results = handle_home_buttons(last_lap_results)
+        if handled_button:
+            continue
+
         try:
             if not wlan.isconnected():
                 wlan = connect_wifi(WIFI_SSID, WIFI_PASSWORD)
 
             lap_results = {}
+            skip_fetch_cycle = False
             for dn in TRACKED_DRIVERS:
+                handled_button, last_lap_results = handle_home_buttons(last_lap_results)
+                if handled_button:
+                    skip_fetch_cycle = True
+                    break
                 try:
                     lap_duration, lap_number, _ = fetch_latest_lap_duration(dn)
                     lap_results[dn] = (lap_duration, lap_number)
                 except Exception:
                     lap_results[dn] = None
+
+            if skip_fetch_cycle:
+                continue
 
             if lap_results != last_lap_results:
                 draw_lap_screen(lap_results, GREEN)
@@ -821,27 +853,15 @@ def main():
         except Exception as exc:
             draw_lines(["Fetch error", str(exc)], RED)
 
-        # Sleep in short steps so Button A stays responsive.
-        poll_remaining = int(POLL_INTERVAL_SECONDS / BUTTON_POLL_SECONDS)
-        while poll_remaining > 0:
-            if BUTTON_A.read():
-                wait_for_release()
-                selection_changed = select_driver_interactive()
-                if selection_changed and last_lap_results is not None:
-                    last_lap_results = {dn: last_lap_results.get(dn) for dn in TRACKED_DRIVERS}
-                draw_cached_main_screen(last_lap_results)
-                # After returning from selection, keep polling inputs instead
-                # of jumping immediately into network fetches.
-                poll_remaining = int(POLL_INTERVAL_SECONDS / BUTTON_POLL_SECONDS)
-                continue
-            if BUTTON_B.read():
-                wait_for_release()
-                show_event_info = not show_event_info
-                draw_cached_main_screen(last_lap_results)
-                poll_remaining = int(POLL_INTERVAL_SECONDS / BUTTON_POLL_SECONDS)
+        poll_deadline = time.ticks_add(time.ticks_ms(), int(POLL_INTERVAL_SECONDS * 1000))
+        while time.ticks_diff(poll_deadline, time.ticks_ms()) > 0:
+            handled_button, last_lap_results = handle_home_buttons(last_lap_results)
+            if handled_button:
+                # Keep the home screen interactive for a full poll interval
+                # after handling a button.
+                poll_deadline = time.ticks_add(time.ticks_ms(), int(POLL_INTERVAL_SECONDS * 1000))
                 continue
             time.sleep(BUTTON_POLL_SECONDS)
-            poll_remaining -= 1
 
 
 main()
