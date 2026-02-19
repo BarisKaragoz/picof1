@@ -84,6 +84,7 @@ event_name = ""
 session_type_name = ""
 circuit_short_name = ""
 country_name = ""
+show_event_info = True
 
 BUTTON_A = Button(12)
 BUTTON_B = Button(13)
@@ -486,20 +487,21 @@ def draw_lap_screen(lap_results, color=WHITE):
         display.text(lap_text, lap_x, y, lap_wrap, 2)
         y += ROW_HEIGHT
 
-    info_y = y + 16
-    info_scale = 2
-    info_row_height = 18
-    display.set_font("bitmap6")
-    display.set_pen(CYAN)
-    for info_text in (event_name, session_type_name, circuit_short_name, country_name):
-        if info_text:
-            tw = text_pixel_width(info_text, info_scale)
-            info_x = (WIDTH - tw) // 2
-            if info_x < 0:
-                info_x = 0
-            display.text(info_text, info_x, info_y, WIDTH - info_x, info_scale)
-            info_y += info_row_height
-    display.set_font("bitmap8")
+    if show_event_info:
+        info_y = y + 16
+        info_scale = 2
+        info_row_height = 18
+        display.set_font("bitmap6")
+        display.set_pen(CYAN)
+        for info_text in (event_name, session_type_name, circuit_short_name, country_name):
+            if info_text:
+                tw = text_pixel_width(info_text, info_scale)
+                info_x = (WIDTH - tw) // 2
+                if info_x < 0:
+                    info_x = 0
+                display.text(info_text, info_x, info_y, WIDTH - info_x, info_scale)
+                info_y += info_row_height
+        display.set_font("bitmap8")
 
     display.update()
 
@@ -763,6 +765,7 @@ def format_lap_number(value):
 
 
 def main():
+    global show_event_info
     draw_lines(["Booting...", "Starting network"], CYAN)
     time.sleep(STARTUP_DELAY_SECONDS)
 
@@ -825,6 +828,12 @@ def main():
                 draw_cached_main_screen(last_lap_results)
                 # After returning from selection, keep polling inputs instead
                 # of jumping immediately into network fetches.
+                poll_remaining = int(POLL_INTERVAL_SECONDS / BUTTON_POLL_SECONDS)
+                continue
+            if BUTTON_B.read():
+                wait_for_release()
+                show_event_info = not show_event_info
+                draw_cached_main_screen(last_lap_results)
                 poll_remaining = int(POLL_INTERVAL_SECONDS / BUTTON_POLL_SECONDS)
                 continue
             time.sleep(BUTTON_POLL_SECONDS)
