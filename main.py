@@ -27,6 +27,8 @@ except ImportError:
 BASE_URL = API_BASE_URL.rstrip("/")
 LAPS_BASE_URL = BASE_URL + "/v1/laps?session_key=latest"
 SESSION_RESULT_URL = BASE_URL + "/v1/session_result?session_key=latest"
+MEETINGS_URL = BASE_URL + "/v1/meetings?meeting_key=latest"
+SESSIONS_URL = BASE_URL + "/v1/sessions?session_key=latest"
 
 POLL_INTERVAL_SECONDS = 5
 STARTUP_DELAY_SECONDS = 1.5
@@ -77,6 +79,11 @@ WHITE = display.create_pen(255, 255, 255)
 GREEN = display.create_pen(80, 240, 120)
 RED = display.create_pen(255, 80, 80)
 CYAN = display.create_pen(80, 220, 255)
+
+event_name = ""
+session_type_name = ""
+circuit_short_name = ""
+country_name = ""
 
 BUTTON_A = Button(12)
 BUTTON_B = Button(13)
@@ -233,6 +240,56 @@ def fetch_top_session_drivers(limit=TRACKED_DRIVER_COUNT):
             raise RuntimeError("HTTP {}".format(response.status_code))
         payload = json.loads(response.text)
         return top_drivers_from_session_payload(payload, limit)
+    finally:
+        if response is not None:
+            response.close()
+        gc.collect()
+
+
+def fetch_event_and_session_info():
+    global event_name, session_type_name, circuit_short_name, country_name
+    response = None
+    gc.collect()
+    try:
+        response = urequests.get(MEETINGS_URL)
+        if response.status_code == 200:
+            payload = json.loads(response.text)
+            if isinstance(payload, list) and payload:
+                payload = payload[-1]
+            if isinstance(payload, dict):
+                event_name = payload.get("meeting_official_name", "")
+    except Exception:
+        pass
+    finally:
+        if response is not None:
+            response.close()
+        gc.collect()
+
+    response = None
+    gc.collect()
+    try:
+        response = urequests.get(SESSIONS_URL)
+        if response.status_code == 200:
+            payload = json.loads(response.text)
+            if isinstance(payload, list) and payload:
+                payload = payload[-1]
+            if isinstance(payload, dict):
+                st = payload.get("session_type", "")
+                sn = payload.get("session_name", "")
+                parts = []
+                if st:
+                    parts.append(str(st))
+                if sn:
+                    parts.append(str(sn))
+                session_type_name = " - ".join(parts)
+                val = payload.get("circuit_short_name", "")
+                if val:
+                    circuit_short_name = str(val)
+                val = payload.get("country_name", "")
+                if val:
+                    country_name = str(val)
+    except Exception:
+        pass
     finally:
         if response is not None:
             response.close()
@@ -428,6 +485,19 @@ def draw_lap_screen(lap_results, color=WHITE):
         display.text(gap_text, gap_x, y, gap_wrap, 2)
         display.text(lap_text, lap_x, y, lap_wrap, 2)
         y += ROW_HEIGHT
+
+    info_y = y + 6
+    info_scale = 1
+    info_row_height = 14
+    display.set_pen(CYAN)
+    for info_text in (event_name, session_type_name, circuit_short_name, country_name):
+        if info_text:
+            tw = text_pixel_width(info_text, info_scale)
+            info_x = (WIDTH - tw) // 2
+            if info_x < 0:
+                info_x = 0
+            display.text(info_text, info_x, info_y, WIDTH - info_x, info_scale)
+            info_y += info_row_height
 
     display.update()
 
@@ -715,6 +785,11 @@ def main():
         TRACKED_DRIVERS[:] = list(DEFAULT_TRACKED_DRIVERS)
         draw_lines(["Session result error", str(exc)], RED)
         time.sleep(1.5)
+
+    try:
+        fetch_event_and_session_info()
+    except Exception:
+        pass
 
     last_lap_results = None
 
