@@ -257,7 +257,7 @@ def fetch_event_and_session_info():
             if isinstance(payload, list) and payload:
                 payload = payload[-1]
             if isinstance(payload, dict):
-                event_name = payload.get("meeting_official_name", "")
+                event_name = payload.get("meeting_name", "")
     except Exception:
         pass
     finally:
@@ -486,9 +486,10 @@ def draw_lap_screen(lap_results, color=WHITE):
         display.text(lap_text, lap_x, y, lap_wrap, 2)
         y += ROW_HEIGHT
 
-    info_y = y + 6
-    info_scale = 1
-    info_row_height = 14
+    info_y = y + 16
+    info_scale = 2
+    info_row_height = 18
+    display.set_font("bitmap6")
     display.set_pen(CYAN)
     for info_text in (event_name, session_type_name, circuit_short_name, country_name):
         if info_text:
@@ -498,6 +499,7 @@ def draw_lap_screen(lap_results, color=WHITE):
                 info_x = 0
             display.text(info_text, info_x, info_y, WIDTH - info_x, info_scale)
             info_y += info_row_height
+    display.set_font("bitmap8")
 
     display.update()
 
