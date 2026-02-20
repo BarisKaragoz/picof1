@@ -107,6 +107,8 @@ ROW_HEIGHT = 28
 VISIBLE_ROWS = (HEIGHT - 12) // ROW_HEIGHT - 1  # minus title row
 MAIN_SCREEN_DRIVER_GAP = 1
 STANDINGS_POS_NAME_GAP = 12
+STANDINGS_NAME_POINTS_GAP = 6
+CONSTRUCTOR_STANDINGS_NAME_POINTS_GAP = 10
 
 
 def event_info_snapshot():
@@ -803,7 +805,7 @@ def fit_text_to_width(text, max_width, scale=2):
     return value + ellipsis
 
 
-def show_scrollable_standings_rows(title, rows):
+def show_scrollable_standings_rows(title, rows, name_points_gap=STANDINGS_NAME_POINTS_GAP):
     if not rows:
         rows = [("P--", "N/A", "?", "W?")]
 
@@ -817,7 +819,7 @@ def show_scrollable_standings_rows(title, rows):
     right_margin = 8
     marker_width = 0
     pos_name_gap = STANDINGS_POS_NAME_GAP
-    col_gap = 6
+    col_gap = name_points_gap
 
     pos_col_width = text_pixel_width("P00", 2)
     name_col_width = text_pixel_width("TEAM", 2)
@@ -896,7 +898,7 @@ def show_scrollable_standings_rows(title, rows):
             time.sleep(BUTTON_POLL_SECONDS)
 
 
-def show_standings_screen(title, fetch_lines_fn):
+def show_standings_screen(title, fetch_lines_fn, name_points_gap=STANDINGS_NAME_POINTS_GAP):
     draw_lines([title, "Loading..."], CYAN)
     gc.collect()
     try:
@@ -906,7 +908,7 @@ def show_standings_screen(title, fetch_lines_fn):
     gc.collect()
 
     if rows_or_lines and isinstance(rows_or_lines[0], tuple) and len(rows_or_lines[0]) == 4:
-        show_scrollable_standings_rows(title, rows_or_lines)
+        show_scrollable_standings_rows(title, rows_or_lines, name_points_gap)
         return
 
     show_scrollable_lines(title, rows_or_lines)
@@ -1042,7 +1044,11 @@ def handle_home_buttons(last_lap_results):
 
     if BUTTON_Y.read():
         wait_for_release()
-        show_standings_screen("Constructor standings", fetch_constructor_standing_lines)
+        show_standings_screen(
+            "Constructor standings",
+            fetch_constructor_standing_lines,
+            CONSTRUCTOR_STANDINGS_NAME_POINTS_GAP,
+        )
         draw_cached_main_screen(last_lap_results)
         return True, last_lap_results
 
