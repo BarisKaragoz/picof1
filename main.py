@@ -29,11 +29,23 @@ LAPS_BASE_URL = BASE_URL + "/v1/laps?session_key=latest"
 SESSION_RESULT_URL = BASE_URL + "/v1/session_result?session_key=latest"
 MEETINGS_URL = BASE_URL + "/v1/meetings?meeting_key=latest"
 SESSIONS_URL = BASE_URL + "/v1/sessions?session_key=latest"
+DRIVER_STANDINGS_URL = "https://api.jolpi.ca/ergast/f1/2025/driverstandings.json"
+CONSTRUCTOR_STANDINGS_URL = "https://api.jolpi.ca/ergast/f1/2025/constructorStandings.json"
+DRIVER_STANDINGS_FALLBACK_URLS = (
+    DRIVER_STANDINGS_URL,
+    "http://api.jolpi.ca/ergast/f1/2025/driverstandings.json",
+)
+CONSTRUCTOR_STANDINGS_FALLBACK_URLS = (
+    CONSTRUCTOR_STANDINGS_URL,
+    "http://api.jolpi.ca/ergast/f1/2025/constructorStandings.json",
+)
 
 POLL_INTERVAL_SECONDS = 5
 STARTUP_DELAY_SECONDS = 1.5
 HTTP_READ_CHUNK_BYTES = 256
 HTTP_TAIL_BYTES = 4096
+STANDINGS_READ_CHUNK_BYTES = 128
+STANDINGS_RETRY_COUNT = 2
 DISPLAY_BRIGHTNESS = 0.4
 BUTTON_POLL_SECONDS = 0.02
 BUTTON_RELEASE_POLL_SECONDS = 0.01
@@ -299,6 +311,323 @@ def fetch_event_and_session_info():
         gc.collect()
 
 
+def standings_lists_from_payload(payload):
+    current = payload
+    if isinstance(current, dict):
+        mr_data = current.get("MRData")
+        if isinstance(mr_data, dict):
+            current = mr_data
+    if isinstance(current, dict):
+        table = current.get("StandingsTable")
+        if isinstance(table, dict):
+            current = table
+
+    if isinstance(current, dict):
+        lists = current.get("StandingsLists")
+        if isinstance(lists, list):
+            return lists
+        if isinstance(lists, dict):
+            return [lists]
+
+    if isinstance(current, list):
+        return current
+
+    return []
+
+
+def standings_entries_from_payload(payload, entry_key):
+    standings_lists = standings_lists_from_payload(payload)
+    for standings in reversed(standings_lists):
+        if not isinstance(standings, dict):
+            continue
+        entries = standings.get(entry_key)
+        if isinstance(entries, list):
+            return entries
+        if isinstance(entries, dict):
+            return [entries]
+    return []
+
+
+def ellipsize(text, max_len):
+    value = str(text)
+    if len(value) <= max_len:
+        return value
+    if max_len <= 3:
+        return value[:max_len]
+    return value[: max_len - 3] + "..."
+
+
+def compact_number_text(value):
+    text = str(value)
+    if text.endswith(".0"):
+        return text[:-2]
+    return text
+
+
+def format_driver_standing_entry(entry, fallback_position):
+    if not isinstance(entry, dict):
+        return None, fallback_position
+
+    position = to_int(entry.get("position"))
+    if position is None:
+        position = fallback_position
+
+    points = entry.get("points")
+    if points is None:
+        points = "?"
+    points_text = compact_number_text(points)
+
+    wins = entry.get("wins")
+    if wins is None:
+        wins = "?"
+    wins_text = compact_number_text(wins)
+
+    driver = entry.get("Driver")
+    code = ""
+    family_name = ""
+    if isinstance(driver, dict):
+        raw_code = driver.get("code")
+        if raw_code:
+            code = str(raw_code).upper()
+
+        raw_family_name = driver.get("familyName")
+        if raw_family_name:
+            family_name = str(raw_family_name).upper()
+
+        if not code:
+            raw_driver_id = driver.get("driverId")
+            if raw_driver_id:
+                parts = str(raw_driver_id).replace("-", "_").split("_")
+                code = parts[-1][:3].upper()
+
+    if not code:
+        code = family_name[:3] if family_name else "DRV"
+
+    row = ("P{:02d}".format(position), code, points_text, "W{}".format(wins_text))
+    return row, position
+
+
+def format_constructor_standing_entry(entry, fallback_position):
+    if not isinstance(entry, dict):
+        return None, fallback_position
+
+    position = to_int(entry.get("position"))
+    if position is None:
+        position = fallback_position
+
+    points = entry.get("points")
+    if points is None:
+        points = "?"
+    points_text = compact_number_text(points)
+
+    wins = entry.get("wins")
+    if wins is None:
+        wins = "?"
+    wins_text = compact_number_text(wins)
+
+    name = "TEAM"
+    constructor = entry.get("Constructor")
+    if isinstance(constructor, dict):
+        raw_name = constructor.get("name")
+        if raw_name:
+            name = str(raw_name).upper()
+
+    short_name = ellipsize(name, 8)
+    row = ("P{:02d}".format(position), short_name, points_text, "W{}".format(wins_text))
+    return row, position
+
+
+def standings_lines_from_entries(entries, format_fn):
+    ranked = []
+    for idx, entry in enumerate(entries):
+        row, position = format_fn(entry, idx + 1)
+        if row is None:
+            continue
+        ranked.append((position, idx, row))
+
+    if not ranked:
+        raise RuntimeError("No standings data")
+
+    ranked.sort()
+    return [row for _position, _idx, row in ranked]
+
+
+def standings_rows_from_stream(raw_stream, entry_key, format_fn):
+    key_bytes = '"{}"'.format(entry_key).encode("utf-8")
+    header = bytearray()
+    key_found = False
+    array_started = False
+
+    in_string = False
+    escape = False
+    object_depth = 0
+    object_bytes = bytearray()
+
+    ranked = []
+    object_count = 0
+
+    def finalize_object():
+        nonlocal object_bytes, object_count, ranked
+        object_count += 1
+        try:
+            entry = json.loads(object_bytes.decode("utf-8"))
+        except Exception:
+            object_bytes = bytearray()
+            return
+
+        row, position = format_fn(entry, object_count)
+        object_bytes = bytearray()
+        if row is None:
+            return
+        ranked.append((position, object_count, row))
+
+    while True:
+        chunk = raw_stream.read(STANDINGS_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        if not isinstance(chunk, (bytes, bytearray)):
+            chunk = str(chunk).encode("utf-8")
+
+        data = chunk
+        if not array_started:
+            header.extend(data)
+            if not key_found:
+                key_index = header.find(key_bytes)
+                if key_index < 0:
+                    keep_bytes = len(key_bytes) * 2
+                    if len(header) > keep_bytes:
+                        header = header[-keep_bytes:]
+                    continue
+                key_found = True
+                header = header[key_index + len(key_bytes):]
+
+            array_index = header.find(b"[")
+            if array_index < 0:
+                if len(header) > 64:
+                    header = header[-64:]
+                continue
+
+            array_started = True
+            data = header[array_index + 1 :]
+            header = bytearray()
+
+        for byte in data:
+            if in_string:
+                if object_depth > 0:
+                    object_bytes.append(byte)
+                if escape:
+                    escape = False
+                elif byte == 92:  # backslash
+                    escape = True
+                elif byte == 34:  # quote
+                    in_string = False
+                continue
+
+            if byte == 34:  # quote
+                in_string = True
+                if object_depth > 0:
+                    object_bytes.append(byte)
+                continue
+
+            if byte == 123:  # {
+                if object_depth == 0:
+                    object_bytes = bytearray()
+                object_depth += 1
+                object_bytes.append(byte)
+                continue
+
+            if byte == 125:  # }
+                if object_depth > 0:
+                    object_depth -= 1
+                    object_bytes.append(byte)
+                    if object_depth == 0:
+                        finalize_object()
+                continue
+
+            if object_depth > 0:
+                object_bytes.append(byte)
+                continue
+
+            if byte == 93:  # ]
+                if not ranked:
+                    raise RuntimeError("No standings data")
+                ranked.sort()
+                return [row for _position, _idx, row in ranked]
+
+    if not ranked:
+        raise RuntimeError("No standings data")
+    ranked.sort()
+    return [row for _position, _idx, row in ranked]
+
+
+def is_enomem_error(exc):
+    if not isinstance(exc, OSError):
+        return False
+    if not exc.args:
+        return False
+    try:
+        return int(exc.args[0]) == 12
+    except Exception:
+        return False
+
+
+def aggressive_gc():
+    gc.collect()
+    gc.collect()
+
+
+def fetch_standing_rows(url_candidates, entry_key, format_fn):
+    if isinstance(url_candidates, str):
+        url_candidates = (url_candidates,)
+
+    last_error = None
+
+    for url in url_candidates:
+        for attempt in range(STANDINGS_RETRY_COUNT):
+            response = None
+            aggressive_gc()
+            try:
+                response = urequests.get(url)
+                if response.status_code != 200:
+                    raise RuntimeError("HTTP {}".format(response.status_code))
+
+                raw_stream = getattr(response, "raw", None)
+                if raw_stream is not None:
+                    return standings_rows_from_stream(raw_stream, entry_key, format_fn)
+
+                # Fallback for unusual urequests implementations.
+                payload = json.loads(response.text)
+                entries = standings_entries_from_payload(payload, entry_key)
+                return standings_lines_from_entries(entries, format_fn)
+            except Exception as exc:
+                last_error = exc
+                if is_enomem_error(exc) and attempt + 1 < STANDINGS_RETRY_COUNT:
+                    time.sleep(0.2)
+                    aggressive_gc()
+                    continue
+                break
+            finally:
+                if response is not None:
+                    response.close()
+                aggressive_gc()
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No standings source available")
+
+
+def fetch_driver_standing_lines():
+    return fetch_standing_rows(
+        DRIVER_STANDINGS_FALLBACK_URLS, "DriverStandings", format_driver_standing_entry
+    )
+
+
+def fetch_constructor_standing_lines():
+    return fetch_standing_rows(
+        CONSTRUCTOR_STANDINGS_FALLBACK_URLS, "ConstructorStandings", format_constructor_standing_entry
+    )
+
+
 def draw_lines(lines, color=WHITE):
     display.set_pen(BLACK)
     display.clear()
@@ -398,6 +727,187 @@ def select_driver_interactive():
         return False
     TRACKED_DRIVERS[slot_idx] = new_driver
     return True
+
+
+def show_scrollable_lines(title, lines):
+    if not lines:
+        lines = ["No data"]
+
+    cursor = 0
+    count = len(lines)
+    window_start = 0
+
+    while True:
+        # Keep cursor visible within the window.
+        if cursor < window_start:
+            window_start = cursor
+        if cursor >= window_start + VISIBLE_ROWS:
+            window_start = cursor - VISIBLE_ROWS + 1
+
+        display.set_pen(BLACK)
+        display.clear()
+
+        display.set_pen(WHITE)
+        display.text(title, 8, 12, WIDTH - 16, 2)
+
+        for i in range(VISIBLE_ROWS):
+            idx = window_start + i
+            if idx >= count:
+                break
+            y = 12 + (i + 1) * ROW_HEIGHT
+            if idx == cursor:
+                display.set_pen(CYAN)
+                display.text("> {}".format(lines[idx]), 8, y, WIDTH - 16, 2)
+            else:
+                display.set_pen(WHITE)
+                display.text("  {}".format(lines[idx]), 8, y, WIDTH - 16, 2)
+
+        display.set_font("bitmap6")
+        display.set_pen(CYAN)
+        display.text("X up   Y down   A back", 8, HEIGHT - 12, WIDTH - 16, 1)
+        display.set_font("bitmap8")
+        display.update()
+
+        while True:
+            if BUTTON_A.read():
+                wait_for_release()
+                return
+            if BUTTON_X.read():
+                cursor = (cursor - 1) % count
+                wait_for_release()
+                break
+            if BUTTON_Y.read():
+                cursor = (cursor + 1) % count
+                wait_for_release()
+                break
+            time.sleep(BUTTON_POLL_SECONDS)
+
+
+def fit_text_to_width(text, max_width, scale=2):
+    value = str(text)
+    if max_width <= 0:
+        return ""
+
+    if text_pixel_width(value, scale) <= max_width:
+        return value
+
+    ellipsis = "..."
+    ellipsis_width = text_pixel_width(ellipsis, scale)
+    if ellipsis_width >= max_width:
+        return ""
+
+    while value and text_pixel_width(value + ellipsis, scale) > max_width:
+        value = value[:-1]
+    return value + ellipsis
+
+
+def show_scrollable_standings_rows(title, rows):
+    if not rows:
+        rows = [("P--", "N/A", "?", "W?")]
+
+    display.set_font("bitmap8")
+
+    cursor = 0
+    count = len(rows)
+    window_start = 0
+
+    left_margin = 8
+    right_margin = 8
+    marker_width = text_pixel_width(">", 2) + 4
+    gap = 6
+
+    pos_col_width = text_pixel_width("P00", 2)
+    name_col_width = text_pixel_width("TEAM", 2)
+    points_col_width = text_pixel_width("0000", 2)
+    wins_col_width = text_pixel_width("W00", 2)
+
+    for pos_text, name_text, points_text, wins_text in rows:
+        pos_col_width = max(pos_col_width, text_pixel_width(pos_text, 2))
+        name_col_width = max(name_col_width, text_pixel_width(name_text, 2))
+        points_col_width = max(points_col_width, text_pixel_width(points_text, 2))
+        wins_col_width = max(wins_col_width, text_pixel_width(wins_text, 2))
+
+    pos_x = left_margin + marker_width
+    name_x = pos_x + pos_col_width + gap
+    points_x = name_x + name_col_width + gap
+    wins_x = points_x + points_col_width + gap
+
+    used_width = wins_x + wins_col_width + right_margin
+    if used_width > WIDTH:
+        overflow = used_width - WIDTH
+        min_name_width = text_pixel_width("AAA", 2)
+        name_col_width = max(min_name_width, name_col_width - overflow)
+        points_x = name_x + name_col_width + gap
+        wins_x = points_x + points_col_width + gap
+
+    while True:
+        # Keep cursor visible within the window.
+        if cursor < window_start:
+            window_start = cursor
+        if cursor >= window_start + VISIBLE_ROWS:
+            window_start = cursor - VISIBLE_ROWS + 1
+
+        display.set_pen(BLACK)
+        display.clear()
+
+        display.set_pen(WHITE)
+        display.text(title, 8, 12, WIDTH - 16, 2)
+
+        for i in range(VISIBLE_ROWS):
+            idx = window_start + i
+            if idx >= count:
+                break
+
+            y = 12 + (i + 1) * ROW_HEIGHT
+            pos_text, name_text, points_text, wins_text = rows[idx]
+            name_draw = fit_text_to_width(name_text, max(1, points_x - name_x - gap), 2)
+
+            if idx == cursor:
+                display.set_pen(CYAN)
+                display.text(">", left_margin, y, marker_width, 2)
+            else:
+                display.set_pen(WHITE)
+
+            display.text(pos_text, pos_x, y, pos_col_width, 2)
+            display.text(name_draw, name_x, y, max(1, points_x - name_x - gap), 2)
+            display.text(points_text, points_x, y, points_col_width, 2)
+            display.text(wins_text, wins_x, y, wins_col_width, 2)
+
+        display.set_font("bitmap6")
+        display.set_pen(CYAN)
+        display.text("X up   Y down   A back", 8, HEIGHT - 12, WIDTH - 16, 1)
+        display.set_font("bitmap8")
+        display.update()
+
+        while True:
+            if BUTTON_A.read():
+                wait_for_release()
+                return
+            if BUTTON_X.read():
+                cursor = (cursor - 1) % count
+                wait_for_release()
+                break
+            if BUTTON_Y.read():
+                cursor = (cursor + 1) % count
+                wait_for_release()
+                break
+            time.sleep(BUTTON_POLL_SECONDS)
+
+
+def show_standings_screen(title, fetch_lines_fn):
+    draw_lines([title, "Loading..."], CYAN)
+    gc.collect()
+    try:
+        rows_or_lines = fetch_lines_fn()
+    except Exception as exc:
+        rows_or_lines = ["Load error", str(exc), "Check Wi-Fi/API"]
+    gc.collect()
+
+    if rows_or_lines and isinstance(rows_or_lines[0], tuple) and len(rows_or_lines[0]) == 4:
+        show_scrollable_standings_rows(title, rows_or_lines)
+        return
+
+    show_scrollable_lines(title, rows_or_lines)
 
 
 def build_lap_rows(lap_results):
@@ -521,6 +1031,18 @@ def draw_cached_main_screen(lap_results):
 
 def handle_home_buttons(last_lap_results):
     global show_event_info
+
+    if BUTTON_X.read():
+        wait_for_release()
+        show_standings_screen("Driver standings", fetch_driver_standing_lines)
+        draw_cached_main_screen(last_lap_results)
+        return True, last_lap_results
+
+    if BUTTON_Y.read():
+        wait_for_release()
+        show_standings_screen("Constructor standings", fetch_constructor_standing_lines)
+        draw_cached_main_screen(last_lap_results)
+        return True, last_lap_results
 
     if BUTTON_A.read():
         wait_for_release()
