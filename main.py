@@ -105,6 +105,8 @@ BUTTON_Y = Button(15)
 
 ROW_HEIGHT = 28
 VISIBLE_ROWS = (HEIGHT - 12) // ROW_HEIGHT - 1  # minus title row
+MAIN_SCREEN_DRIVER_GAP = 1
+STANDINGS_POS_NAME_GAP = 12
 
 
 def event_info_snapshot():
@@ -813,8 +815,9 @@ def show_scrollable_standings_rows(title, rows):
 
     left_margin = 8
     right_margin = 8
-    marker_width = text_pixel_width(">", 2) + 4
-    gap = 6
+    marker_width = 0
+    pos_name_gap = STANDINGS_POS_NAME_GAP
+    col_gap = 6
 
     pos_col_width = text_pixel_width("P00", 2)
     name_col_width = text_pixel_width("TEAM", 2)
@@ -828,17 +831,17 @@ def show_scrollable_standings_rows(title, rows):
         wins_col_width = max(wins_col_width, text_pixel_width(wins_text, 2))
 
     pos_x = left_margin + marker_width
-    name_x = pos_x + pos_col_width + gap
-    points_x = name_x + name_col_width + gap
-    wins_x = points_x + points_col_width + gap
+    name_x = pos_x + pos_col_width + pos_name_gap
+    points_x = name_x + name_col_width + col_gap
+    wins_x = points_x + points_col_width + col_gap
 
     used_width = wins_x + wins_col_width + right_margin
     if used_width > WIDTH:
         overflow = used_width - WIDTH
         min_name_width = text_pixel_width("AAA", 2)
         name_col_width = max(min_name_width, name_col_width - overflow)
-        points_x = name_x + name_col_width + gap
-        wins_x = points_x + points_col_width + gap
+        points_x = name_x + name_col_width + col_gap
+        wins_x = points_x + points_col_width + col_gap
 
     while True:
         # Keep cursor visible within the window.
@@ -860,16 +863,15 @@ def show_scrollable_standings_rows(title, rows):
 
             y = 12 + (i + 1) * ROW_HEIGHT
             pos_text, name_text, points_text, wins_text = rows[idx]
-            name_draw = fit_text_to_width(name_text, max(1, points_x - name_x - gap), 2)
+            name_draw = fit_text_to_width(name_text, max(1, points_x - name_x - col_gap), 2)
 
             if idx == cursor:
                 display.set_pen(CYAN)
-                display.text(">", left_margin, y, marker_width, 2)
             else:
                 display.set_pen(WHITE)
 
             display.text(pos_text, pos_x, y, pos_col_width, 2)
-            display.text(name_draw, name_x, y, max(1, points_x - name_x - gap), 2)
+            display.text(name_draw, name_x, y, max(1, points_x - name_x - col_gap), 2)
             display.text(points_text, points_x, y, points_col_width, 2)
             display.text(wins_text, wins_x, y, wins_col_width, 2)
 
@@ -948,7 +950,7 @@ def draw_lap_screen(lap_results, color=WHITE):
 
     left_margin = 8
     right_margin = 8
-    driver_gap = 8
+    driver_gap = MAIN_SCREEN_DRIVER_GAP
     gap_gap = 6
     lap_gap = 6
 
