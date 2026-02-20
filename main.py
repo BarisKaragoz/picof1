@@ -95,6 +95,10 @@ ROW_HEIGHT = 28
 VISIBLE_ROWS = (HEIGHT - 12) // ROW_HEIGHT - 1  # minus title row
 
 
+def event_info_snapshot():
+    return (event_name, session_type_name, circuit_short_name, country_name)
+
+
 def format_driver_code(driver_number):
     if driver_number is None:
         return "?"
@@ -284,11 +288,9 @@ def fetch_event_and_session_info():
                     parts.append(str(sn))
                 session_type_name = " - ".join(parts)
                 val = payload.get("circuit_short_name", "")
-                if val:
-                    circuit_short_name = str(val)
+                circuit_short_name = str(val) if val else ""
                 val = payload.get("country_name", "")
-                if val:
-                    country_name = str(val)
+                country_name = str(val) if val else ""
     except Exception:
         pass
     finally:
@@ -821,6 +823,7 @@ def main():
         pass
 
     last_lap_results = None
+    last_event_info = event_info_snapshot()
 
     while True:
         handled_button, last_lap_results = handle_home_buttons(last_lap_results)
@@ -830,6 +833,12 @@ def main():
         try:
             if not wlan.isconnected():
                 wlan = connect_wifi(WIFI_SSID, WIFI_PASSWORD)
+
+            try:
+                fetch_event_and_session_info()
+            except Exception:
+                pass
+            current_event_info = event_info_snapshot()
 
             lap_results = {}
             skip_fetch_cycle = False
@@ -847,9 +856,10 @@ def main():
             if skip_fetch_cycle:
                 continue
 
-            if lap_results != last_lap_results:
+            if lap_results != last_lap_results or current_event_info != last_event_info:
                 draw_lap_screen(lap_results, GREEN)
                 last_lap_results = lap_results
+                last_event_info = current_event_info
         except Exception as exc:
             draw_lines(["Fetch error", str(exc)], RED)
 
