@@ -733,20 +733,43 @@ def select_driver_interactive():
     return True
 
 
+def page_scroll_start(current_start, count, page_size, direction):
+    if page_size <= 0:
+        page_size = 1
+
+    max_start = count - page_size
+    if max_start < 0:
+        max_start = 0
+
+    if direction < 0:
+        if current_start <= 0:
+            return max_start
+        next_start = current_start - page_size
+        if next_start < 0:
+            next_start = 0
+        return next_start
+
+    if current_start >= max_start:
+        return 0
+
+    next_start = current_start + page_size
+    if next_start > max_start:
+        next_start = max_start
+    return next_start
+
+
 def show_scrollable_lines(title, lines):
     if not lines:
         lines = ["No data"]
 
-    cursor = 0
     count = len(lines)
+    page_size = max(1, VISIBLE_ROWS)
     window_start = 0
 
     while True:
-        # Keep cursor visible within the window.
-        if cursor < window_start:
-            window_start = cursor
-        if cursor >= window_start + VISIBLE_ROWS:
-            window_start = cursor - VISIBLE_ROWS + 1
+        max_window_start = max(0, count - page_size)
+        if window_start > max_window_start:
+            window_start = max_window_start
 
         display.set_pen(BLACK)
         display.clear()
@@ -754,17 +777,13 @@ def show_scrollable_lines(title, lines):
         display.set_pen(WHITE)
         display.text(title, 8, 12, WIDTH - 16, 2)
 
-        for i in range(VISIBLE_ROWS):
+        for i in range(page_size):
             idx = window_start + i
             if idx >= count:
                 break
             y = 12 + (i + 1) * ROW_HEIGHT
-            if idx == cursor:
-                display.set_pen(CYAN)
-                display.text("> {}".format(lines[idx]), 8, y, WIDTH - 16, 2)
-            else:
-                display.set_pen(WHITE)
-                display.text("  {}".format(lines[idx]), 8, y, WIDTH - 16, 2)
+            display.set_pen(WHITE)
+            display.text("  {}".format(lines[idx]), 8, y, WIDTH - 16, 2)
 
         display.update()
 
@@ -773,11 +792,11 @@ def show_scrollable_lines(title, lines):
                 wait_for_release()
                 return
             if BUTTON_X.read():
-                cursor = (cursor - 1) % count
+                window_start = page_scroll_start(window_start, count, page_size, -1)
                 wait_for_release()
                 break
             if BUTTON_Y.read():
-                cursor = (cursor + 1) % count
+                window_start = page_scroll_start(window_start, count, page_size, 1)
                 wait_for_release()
                 break
             time.sleep(BUTTON_POLL_SECONDS)
@@ -807,8 +826,8 @@ def show_scrollable_standings_rows(title, rows, name_points_gap=STANDINGS_NAME_P
 
     display.set_font("bitmap8")
 
-    cursor = 0
     count = len(rows)
+    page_size = max(1, VISIBLE_ROWS)
     window_start = 0
 
     left_margin = 8
@@ -842,11 +861,9 @@ def show_scrollable_standings_rows(title, rows, name_points_gap=STANDINGS_NAME_P
         wins_x = points_x + points_col_width + col_gap
 
     while True:
-        # Keep cursor visible within the window.
-        if cursor < window_start:
-            window_start = cursor
-        if cursor >= window_start + VISIBLE_ROWS:
-            window_start = cursor - VISIBLE_ROWS + 1
+        max_window_start = max(0, count - page_size)
+        if window_start > max_window_start:
+            window_start = max_window_start
 
         display.set_pen(BLACK)
         display.clear()
@@ -854,7 +871,7 @@ def show_scrollable_standings_rows(title, rows, name_points_gap=STANDINGS_NAME_P
         display.set_pen(WHITE)
         display.text(title, 8, 12, WIDTH - 16, 2)
 
-        for i in range(VISIBLE_ROWS):
+        for i in range(page_size):
             idx = window_start + i
             if idx >= count:
                 break
@@ -863,10 +880,7 @@ def show_scrollable_standings_rows(title, rows, name_points_gap=STANDINGS_NAME_P
             pos_text, name_text, points_text, wins_text = rows[idx]
             name_draw = fit_text_to_width(name_text, max(1, points_x - name_x - col_gap), 2)
 
-            if idx == cursor:
-                display.set_pen(CYAN)
-            else:
-                display.set_pen(WHITE)
+            display.set_pen(WHITE)
 
             display.text(pos_text, pos_x, y, pos_col_width, 2)
             display.text(name_draw, name_x, y, max(1, points_x - name_x - col_gap), 2)
@@ -880,11 +894,11 @@ def show_scrollable_standings_rows(title, rows, name_points_gap=STANDINGS_NAME_P
                 wait_for_release()
                 return
             if BUTTON_X.read():
-                cursor = (cursor - 1) % count
+                window_start = page_scroll_start(window_start, count, page_size, -1)
                 wait_for_release()
                 break
             if BUTTON_Y.read():
-                cursor = (cursor + 1) % count
+                window_start = page_scroll_start(window_start, count, page_size, 1)
                 wait_for_release()
                 break
             time.sleep(BUTTON_POLL_SECONDS)
@@ -1030,14 +1044,14 @@ def handle_home_buttons(last_lap_results):
 
     if BUTTON_X.read():
         wait_for_release()
-        show_standings_screen("Driver standings", fetch_driver_standing_lines)
+        show_standings_screen("Latest Driver Standings", fetch_driver_standing_lines)
         draw_cached_main_screen(last_lap_results)
         return True, last_lap_results
 
     if BUTTON_Y.read():
         wait_for_release()
         show_standings_screen(
-            "Constructor standings",
+            "Latest Constructors Standings",
             fetch_constructor_standing_lines,
             CONSTRUCTOR_STANDINGS_NAME_POINTS_GAP,
         )
