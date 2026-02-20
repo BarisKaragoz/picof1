@@ -766,10 +766,6 @@ def show_scrollable_lines(title, lines):
                 display.set_pen(WHITE)
                 display.text("  {}".format(lines[idx]), 8, y, WIDTH - 16, 2)
 
-        display.set_font("bitmap6")
-        display.set_pen(CYAN)
-        display.text("X up   Y down   A back", 8, HEIGHT - 12, WIDTH - 16, 1)
-        display.set_font("bitmap8")
         display.update()
 
         while True:
@@ -877,10 +873,6 @@ def show_scrollable_standings_rows(title, rows, name_points_gap=STANDINGS_NAME_P
             display.text(points_text, points_x, y, points_col_width, 2)
             display.text(wins_text, wins_x, y, wins_col_width, 2)
 
-        display.set_font("bitmap6")
-        display.set_pen(CYAN)
-        display.text("X up   Y down   A back", 8, HEIGHT - 12, WIDTH - 16, 1)
-        display.set_font("bitmap8")
         display.update()
 
         while True:
