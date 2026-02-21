@@ -1,3 +1,6 @@
+## Important
+I think transparency is important and I hereby honestly state that this project is vibe-coded. I am not a programmer, just someone with creative ideas and I use LLMs to make those ideas possible. I tried to follow best practices regarding security (like storing secrets in separate files that are not committed to GitHub) but again, I’m not a programmer. Feel free to fork this project and improve it or submit PRs. Enjoy!
+
 # Pico F1 Lap Display
 
 MicroPython app for Raspberry Pi Pico W + Pico Display that connects to Wi-Fi, loads top drivers from session results on cold boot, polls a lap-time API, and renders the latest laps on screen.
