@@ -5,23 +5,14 @@ import network
 import picographics as pg # type: ignore
 from pimoroni import Button  # type: ignore
 import urequests
-
-try:
-    import ujson as json
-except ImportError:
-    import json
+import ujson as json
 
 
-DEFAULT_TRACKED_DRIVERS = [44, 81, 3]  # fallback if startup ranking fetch fails
-TRACKED_DRIVERS = list(DEFAULT_TRACKED_DRIVERS)
+INITIAL_TRACKED_DRIVERS = [44, 81, 3]
+TRACKED_DRIVERS = list(INITIAL_TRACKED_DRIVERS)
 TRACKED_DRIVER_COUNT = 3
 
-from secrets import WIFI_SSID, WIFI_PASSWORD, WIFI_COUNTRY
-
-try:
-    from secrets import API_BASE_URL
-except ImportError:
-    API_BASE_URL = "http://192.168.26.249:8000"
+from secrets import WIFI_SSID, WIFI_PASSWORD, WIFI_COUNTRY, API_BASE_URL
 
 # Set API_BASE_URL in secrets.py (example: http://example.com).
 BASE_URL = API_BASE_URL.rstrip("/")
@@ -29,15 +20,11 @@ LAPS_BASE_URL = BASE_URL + "/v1/laps?session_key=latest"
 SESSION_RESULT_URL = BASE_URL + "/v1/session_result?session_key=latest"
 MEETINGS_URL = BASE_URL + "/v1/meetings?meeting_key=latest"
 SESSIONS_URL = BASE_URL + "/v1/sessions?session_key=latest"
-DRIVER_STANDINGS_URL = "https://api.jolpi.ca/ergast/f1/2025/driverstandings.json"
-CONSTRUCTOR_STANDINGS_URL = "https://api.jolpi.ca/ergast/f1/2025/constructorStandings.json"
-DRIVER_STANDINGS_FALLBACK_URLS = (
-    DRIVER_STANDINGS_URL,
-    "http://api.jolpi.ca/ergast/f1/2025/driverstandings.json",
+DRIVER_STANDINGS_URL = (
+    "https://api.jolpi.ca/ergast/f1/2025/last/driverstandings/?format=json&limit=10"
 )
-CONSTRUCTOR_STANDINGS_FALLBACK_URLS = (
-    CONSTRUCTOR_STANDINGS_URL,
-    "http://api.jolpi.ca/ergast/f1/2025/constructorStandings.json",
+CONSTRUCTOR_STANDINGS_URL = (
+    "https://api.jolpi.ca/ergast/f1/2025/last/constructorstandings/?format=json&limit=10"
 )
 
 POLL_INTERVAL_SECONDS = 5
@@ -45,7 +32,7 @@ STARTUP_DELAY_SECONDS = 1.5
 HTTP_READ_CHUNK_BYTES = 256
 HTTP_TAIL_BYTES = 4096
 STANDINGS_READ_CHUNK_BYTES = 128
-STANDINGS_RETRY_COUNT = 2
+STANDINGS_ENTRY_LIMIT = 10
 DISPLAY_BRIGHTNESS = 0.4
 BUTTON_POLL_SECONDS = 0.02
 BUTTON_RELEASE_POLL_SECONDS = 0.01
@@ -90,9 +77,7 @@ CONSTRUCTOR_SHORT_NAME_PAIRS = (
 )
 
 
-DISPLAY_TYPE = getattr(pg, "DISPLAY_PICO_DISPLAY_2", None)
-if DISPLAY_TYPE is None:
-    DISPLAY_TYPE = pg.DISPLAY_PICO_DISPLAY
+DISPLAY_TYPE = pg.DISPLAY_PICO_DISPLAY_2
 
 display = pg.PicoGraphics(display=DISPLAY_TYPE)
 display.set_backlight(DISPLAY_BRIGHTNESS)
@@ -129,15 +114,7 @@ def event_info_snapshot():
 
 
 def format_driver_code(driver_number):
-    if driver_number is None:
-        return "?"
-
-    try:
-        driver_number = int(driver_number)
-    except Exception:
-        return str(driver_number)
-
-    return DRIVER_CODES.get(driver_number, str(driver_number))
+    return DRIVER_CODES[int(driver_number)]
 
 
 def api_url_for_driver(driver_number):
@@ -145,97 +122,18 @@ def api_url_for_driver(driver_number):
 
 
 
-def to_int(value):
-    try:
-        return int(value)
-    except Exception:
-        return None
-
-
-def to_float(value):
-    try:
-        return float(value)
-    except Exception:
-        return None
-
-
-def driver_number_from_result_entry(entry):
-    if isinstance(entry, (int, float, str)):
-        return to_int(entry)
-    if not isinstance(entry, dict):
-        return None
-
-    raw_driver = entry.get("driver_number")
-    if raw_driver is None:
-        raw_driver = entry.get("driverNumber")
-    if raw_driver is None:
-        raw_driver = entry.get("number")
-    if raw_driver is None:
-        raw_driver = entry.get("driver")
-
-    if isinstance(raw_driver, dict):
-        nested = raw_driver.get("driver_number")
-        if nested is None:
-            nested = raw_driver.get("driverNumber")
-        if nested is None:
-            nested = raw_driver.get("number")
-        if nested is None:
-            nested = raw_driver.get("id")
-        raw_driver = nested
-
-    return to_int(raw_driver)
-
-
-def position_from_result_entry(entry, fallback_position):
-    if not isinstance(entry, dict):
-        return fallback_position
-
-    for key in (
-        "position",
-        "pos",
-        "rank",
-        "classification_position",
-        "final_position",
-        "placement",
-        "order",
-    ):
-        value = to_int(entry.get(key))
-        if value is not None:
-            return value
-    return fallback_position
-
-
-def result_entries_from_payload(payload):
-    if isinstance(payload, list):
-        return payload
-
-    if isinstance(payload, dict):
-        for key in (
-            "results",
-            "data",
-            "session_result",
-            "session_results",
-            "classification",
-            "items",
-            "drivers",
-        ):
-            value = payload.get(key)
-            if isinstance(value, list):
-                return value
-        return [payload]
-
-    return []
-
-
 def top_drivers_from_session_payload(payload, limit=TRACKED_DRIVER_COUNT):
-    entries = result_entries_from_payload(payload)
+    if not isinstance(payload, list):
+        raise RuntimeError("Bad session_result payload")
+
+    entries = payload
     ranked = []
 
     for idx, entry in enumerate(entries):
-        driver_number = driver_number_from_result_entry(entry)
-        if driver_number is None:
+        if not isinstance(entry, dict):
             continue
-        position = position_from_result_entry(entry, idx + 1)
+        driver_number = int(entry["driver_number"])
+        position = int(entry["position"])
         ranked.append((position, idx, driver_number))
 
     if not ranked:
@@ -252,16 +150,6 @@ def top_drivers_from_session_payload(payload, limit=TRACKED_DRIVER_COUNT):
         if len(top_drivers) >= limit:
             break
 
-    for driver_number in DEFAULT_TRACKED_DRIVERS:
-        if len(top_drivers) >= limit:
-            break
-        if driver_number not in seen:
-            seen.add(driver_number)
-            top_drivers.append(driver_number)
-
-    if not top_drivers:
-        raise RuntimeError("No usable drivers in session_result")
-
     return top_drivers[:limit]
 
 
@@ -269,7 +157,7 @@ def fetch_top_session_drivers(limit=TRACKED_DRIVER_COUNT):
     response = None
     gc.collect()
     try:
-        response = urequests.get(SESSION_RESULT_URL)
+        response = urequests.get(SESSION_RESULT_URL, stream=True)
         if response.status_code != 200:
             raise RuntimeError("HTTP {}".format(response.status_code))
         payload = json.loads(response.text)
@@ -285,15 +173,11 @@ def fetch_event_and_session_info():
     response = None
     gc.collect()
     try:
-        response = urequests.get(MEETINGS_URL)
-        if response.status_code == 200:
-            payload = json.loads(response.text)
-            if isinstance(payload, list) and payload:
-                payload = payload[-1]
-            if isinstance(payload, dict):
-                event_name = payload.get("meeting_name", "")
-    except Exception:
-        pass
+        response = urequests.get(MEETINGS_URL, stream=True)
+        if response.status_code != 200:
+            raise RuntimeError("HTTP {}".format(response.status_code))
+        payload = json.loads(response.text)
+        event_name = str(payload[-1]["meeting_name"])
     finally:
         if response is not None:
             response.close()
@@ -302,67 +186,20 @@ def fetch_event_and_session_info():
     response = None
     gc.collect()
     try:
-        response = urequests.get(SESSIONS_URL)
-        if response.status_code == 200:
-            payload = json.loads(response.text)
-            if isinstance(payload, list) and payload:
-                payload = payload[-1]
-            if isinstance(payload, dict):
-                st = payload.get("session_type", "")
-                sn = payload.get("session_name", "")
-                parts = []
-                if st:
-                    parts.append(str(st))
-                if sn:
-                    parts.append(str(sn))
-                session_type_name = " - ".join(parts)
-                val = payload.get("circuit_short_name", "")
-                circuit_short_name = str(val) if val else ""
-                val = payload.get("country_name", "")
-                country_name = str(val) if val else ""
-    except Exception:
-        pass
+        response = urequests.get(SESSIONS_URL, stream=True)
+        if response.status_code != 200:
+            raise RuntimeError("HTTP {}".format(response.status_code))
+        payload = json.loads(response.text)
+        session = payload[-1]
+        st = str(session["session_type"])
+        sn = str(session["session_name"])
+        session_type_name = "{} - {}".format(st, sn)
+        circuit_short_name = str(session["circuit_short_name"])
+        country_name = str(session["country_name"])
     finally:
         if response is not None:
             response.close()
         gc.collect()
-
-
-def standings_lists_from_payload(payload):
-    current = payload
-    if isinstance(current, dict):
-        mr_data = current.get("MRData")
-        if isinstance(mr_data, dict):
-            current = mr_data
-    if isinstance(current, dict):
-        table = current.get("StandingsTable")
-        if isinstance(table, dict):
-            current = table
-
-    if isinstance(current, dict):
-        lists = current.get("StandingsLists")
-        if isinstance(lists, list):
-            return lists
-        if isinstance(lists, dict):
-            return [lists]
-
-    if isinstance(current, list):
-        return current
-
-    return []
-
-
-def standings_entries_from_payload(payload, entry_key):
-    standings_lists = standings_lists_from_payload(payload)
-    for standings in reversed(standings_lists):
-        if not isinstance(standings, dict):
-            continue
-        entries = standings.get(entry_key)
-        if isinstance(entries, list):
-            return entries
-        if isinstance(entries, dict):
-            return [entries]
-    return []
 
 
 def ellipsize(text, max_len):
@@ -382,111 +219,34 @@ def compact_number_text(value):
 
 
 def constructor_short_name_from_entry(entry):
-    constructor = entry.get("Constructor")
-    if not isinstance(constructor, dict):
-        return "TEAM"
+    raw_constructor_id = str(entry["Constructor"]["constructorId"])
+    for constructor_id, short_name in CONSTRUCTOR_SHORT_NAME_PAIRS:
+        if raw_constructor_id == constructor_id:
+            return short_name
 
-    raw_constructor_id = constructor.get("constructorId")
-    if raw_constructor_id:
-        if not isinstance(raw_constructor_id, str):
-            raw_constructor_id = str(raw_constructor_id)
-
-        for constructor_id, short_name in CONSTRUCTOR_SHORT_NAME_PAIRS:
-            if raw_constructor_id == constructor_id:
-                return short_name
-
-    raw_name = constructor.get("name")
-    if not raw_name:
-        return "TEAM"
-
-    if not isinstance(raw_name, str):
-        raw_name = str(raw_name)
-
+    raw_name = str(entry["Constructor"]["name"])
     return ellipsize(raw_name.upper(), 8)
 
 
-def format_driver_standing_entry(entry, fallback_position):
-    if not isinstance(entry, dict):
-        return None, fallback_position
-
-    position = to_int(entry.get("position"))
-    if position is None:
-        position = fallback_position
-
-    points = entry.get("points")
-    if points is None:
-        points = "?"
-    points_text = compact_number_text(points)
-
-    wins = entry.get("wins")
-    if wins is None:
-        wins = "?"
-    wins_text = compact_number_text(wins)
-
-    driver = entry.get("Driver")
-    code = ""
-    family_name = ""
-    if isinstance(driver, dict):
-        raw_code = driver.get("code")
-        if raw_code:
-            code = str(raw_code).upper()
-
-        raw_family_name = driver.get("familyName")
-        if raw_family_name:
-            family_name = str(raw_family_name).upper()
-
-        if not code:
-            raw_driver_id = driver.get("driverId")
-            if raw_driver_id:
-                parts = str(raw_driver_id).replace("-", "_").split("_")
-                code = parts[-1][:3].upper()
-
-    if not code:
-        code = family_name[:3] if family_name else "DRV"
-
+def format_driver_standing_entry(entry):
+    position = int(entry["position"])
+    points_text = compact_number_text(entry["points"])
+    wins_text = compact_number_text(entry["wins"])
+    code = str(entry["Driver"]["code"]).upper()
     row = ("P{:02d}".format(position), code, points_text, "W{}".format(wins_text))
     return row, position
 
 
-def format_constructor_standing_entry(entry, fallback_position):
-    if not isinstance(entry, dict):
-        return None, fallback_position
-
-    position = to_int(entry.get("position"))
-    if position is None:
-        position = fallback_position
-
-    points = entry.get("points")
-    if points is None:
-        points = "?"
-    points_text = compact_number_text(points)
-
-    wins = entry.get("wins")
-    if wins is None:
-        wins = "?"
-    wins_text = compact_number_text(wins)
-
+def format_constructor_standing_entry(entry):
+    position = int(entry["position"])
+    points_text = compact_number_text(entry["points"])
+    wins_text = compact_number_text(entry["wins"])
     short_name = constructor_short_name_from_entry(entry)
     row = ("P{:02d}".format(position), short_name, points_text, "W{}".format(wins_text))
     return row, position
 
 
-def standings_lines_from_entries(entries, format_fn):
-    ranked = []
-    for idx, entry in enumerate(entries):
-        row, position = format_fn(entry, idx + 1)
-        if row is None:
-            continue
-        ranked.append((position, idx, row))
-
-    if not ranked:
-        raise RuntimeError("No standings data")
-
-    ranked.sort()
-    return [row for _position, _idx, row in ranked]
-
-
-def standings_rows_from_stream(raw_stream, entry_key, format_fn):
+def standings_rows_from_stream(raw_stream, entry_key, format_fn, limit=STANDINGS_ENTRY_LIMIT):
     key_bytes = '"{}"'.format(entry_key).encode("utf-8")
     header = bytearray()
     key_found = False
@@ -498,22 +258,15 @@ def standings_rows_from_stream(raw_stream, entry_key, format_fn):
     object_bytes = bytearray()
 
     ranked = []
-    object_count = 0
-
     def finalize_object():
-        nonlocal object_bytes, object_count, ranked
-        object_count += 1
-        try:
-            entry = json.loads(object_bytes.decode("utf-8"))
-        except Exception:
-            object_bytes = bytearray()
-            return
-
-        row, position = format_fn(entry, object_count)
+        nonlocal object_bytes, ranked
+        entry = json.loads(object_bytes.decode("utf-8"))
+        row, position = format_fn(entry)
         object_bytes = bytearray()
-        if row is None:
-            return
-        ranked.append((position, object_count, row))
+        ranked.append((position, row))
+        if limit > 0 and len(ranked) > limit:
+            ranked.sort()
+            del ranked[limit:]
 
     while True:
         chunk = raw_stream.read(STANDINGS_READ_CHUNK_BYTES)
@@ -586,23 +339,16 @@ def standings_rows_from_stream(raw_stream, entry_key, format_fn):
                 if not ranked:
                     raise RuntimeError("No standings data")
                 ranked.sort()
-                return [row for _position, _idx, row in ranked]
+                if limit > 0:
+                    ranked = ranked[:limit]
+                return [row for _position, row in ranked]
 
     if not ranked:
         raise RuntimeError("No standings data")
     ranked.sort()
-    return [row for _position, _idx, row in ranked]
-
-
-def is_enomem_error(exc):
-    if not isinstance(exc, OSError):
-        return False
-    if not exc.args:
-        return False
-    try:
-        return int(exc.args[0]) == 12
-    except Exception:
-        return False
+    if limit > 0:
+        ranked = ranked[:limit]
+    return [row for _position, row in ranked]
 
 
 def aggressive_gc():
@@ -610,55 +356,39 @@ def aggressive_gc():
     gc.collect()
 
 
-def fetch_standing_rows(url_candidates, entry_key, format_fn):
-    if isinstance(url_candidates, str):
-        url_candidates = (url_candidates,)
+def fetch_standing_rows(url, entry_key, format_fn, limit=STANDINGS_ENTRY_LIMIT):
+    response = None
+    aggressive_gc()
+    try:
+        response = urequests.get(url, stream=True)
+        if response.status_code != 200:
+            raise RuntimeError("HTTP {}".format(response.status_code))
 
-    last_error = None
-
-    for url in url_candidates:
-        for attempt in range(STANDINGS_RETRY_COUNT):
-            response = None
-            aggressive_gc()
-            try:
-                response = urequests.get(url)
-                if response.status_code != 200:
-                    raise RuntimeError("HTTP {}".format(response.status_code))
-
-                raw_stream = getattr(response, "raw", None)
-                if raw_stream is not None:
-                    return standings_rows_from_stream(raw_stream, entry_key, format_fn)
-
-                # Fallback for unusual urequests implementations.
-                payload = json.loads(response.text)
-                entries = standings_entries_from_payload(payload, entry_key)
-                return standings_lines_from_entries(entries, format_fn)
-            except Exception as exc:
-                last_error = exc
-                if is_enomem_error(exc) and attempt + 1 < STANDINGS_RETRY_COUNT:
-                    time.sleep(0.2)
-                    aggressive_gc()
-                    continue
-                break
-            finally:
-                if response is not None:
-                    response.close()
-                aggressive_gc()
-
-    if last_error is not None:
-        raise last_error
-    raise RuntimeError("No standings source available")
+        raw_stream = getattr(response, "raw", None)
+        if raw_stream is None:
+            raise RuntimeError("No streamed standings response")
+        return standings_rows_from_stream(raw_stream, entry_key, format_fn, limit)
+    finally:
+        if response is not None:
+            response.close()
+        aggressive_gc()
 
 
 def fetch_driver_standing_lines():
     return fetch_standing_rows(
-        DRIVER_STANDINGS_FALLBACK_URLS, "DriverStandings", format_driver_standing_entry
+        DRIVER_STANDINGS_URL,
+        "DriverStandings",
+        format_driver_standing_entry,
+        STANDINGS_ENTRY_LIMIT,
     )
 
 
 def fetch_constructor_standing_lines():
     return fetch_standing_rows(
-        CONSTRUCTOR_STANDINGS_FALLBACK_URLS, "ConstructorStandings", format_constructor_standing_entry
+        CONSTRUCTOR_STANDINGS_URL,
+        "ConstructorStandings",
+        format_constructor_standing_entry,
+        STANDINGS_ENTRY_LIMIT,
     )
 
 
@@ -789,9 +519,6 @@ def page_scroll_start(current_start, count, page_size, direction):
 
 
 def show_scrollable_lines(title, lines):
-    if not lines:
-        lines = ["No data"]
-
     count = len(lines)
     page_size = max(1, VISIBLE_ROWS)
     window_start = 0
@@ -851,9 +578,6 @@ def fit_text_to_width(text, max_width, scale=2):
 
 
 def show_scrollable_standings_rows(title, rows, name_points_gap=STANDINGS_NAME_POINTS_GAP):
-    if not rows:
-        rows = [("P--", "N/A", "?", "W?")]
-
     display.set_font("bitmap8")
 
     count = len(rows)
@@ -937,17 +661,27 @@ def show_scrollable_standings_rows(title, rows, name_points_gap=STANDINGS_NAME_P
 def show_standings_screen(title, fetch_lines_fn, name_points_gap=STANDINGS_NAME_POINTS_GAP):
     draw_lines([title, "Loading..."], CYAN)
     gc.collect()
-    try:
-        rows_or_lines = fetch_lines_fn()
-    except Exception as exc:
-        rows_or_lines = ["Load error", str(exc), "Check Wi-Fi/API"]
+    rows_or_lines = fetch_lines_fn()
     gc.collect()
 
-    if rows_or_lines and isinstance(rows_or_lines[0], tuple) and len(rows_or_lines[0]) == 4:
-        show_scrollable_standings_rows(title, rows_or_lines, name_points_gap)
-        return
+    show_scrollable_standings_rows(title, rows_or_lines, name_points_gap)
 
-    show_scrollable_lines(title, rows_or_lines)
+
+def empty_lap_results():
+    results = {}
+    for dn in TRACKED_DRIVERS:
+        results[dn] = (None, None)
+    return results
+
+
+def has_lap_data(lap_results):
+    for dn in TRACKED_DRIVERS:
+        lap_result = lap_results.get(dn)
+        if lap_result is None:
+            continue
+        if lap_result[0] is not None:
+            return True
+    return False
 
 
 def build_lap_rows(lap_results):
@@ -955,29 +689,37 @@ def build_lap_rows(lap_results):
     leader_duration = None
     if TRACKED_DRIVERS:
         leader_result = lap_results.get(TRACKED_DRIVERS[0])
-        if leader_result is not None:
-            leader_duration = to_float(leader_result[0])
+        if leader_result is not None and leader_result[0] is not None:
+            leader_duration = float(leader_result[0])
 
     for dn in TRACKED_DRIVERS:
         lap_result = lap_results.get(dn)
-        if lap_result is not None:
-            duration, lap_number = lap_result
-            duration_text = format_lap_duration(duration)
-            gap_text = format_gap_to_leader(duration, leader_duration)
-            lap_text = format_lap_number(lap_number)
+        if lap_result is None:
+            duration = None
+            lap_number = None
         else:
+            duration, lap_number = lap_result
+
+        if duration is None:
             duration_text = "--:--.---"
             gap_text = "+--.---"
+        else:
+            duration_text = format_lap_duration(duration)
+            if leader_duration is None:
+                gap_text = "+--.---"
+            else:
+                gap_text = format_gap_to_leader(duration, leader_duration)
+
+        if lap_number is None:
             lap_text = "lap --"
+        else:
+            lap_text = format_lap_number(lap_number)
         rows.append((format_driver_code(dn), duration_text, gap_text, lap_text))
     return rows
 
 
 def text_pixel_width(text, scale=2):
-    try:
-        return display.measure_text(str(text), scale)
-    except Exception:
-        return len(str(text)) * 8 * scale
+    return display.measure_text(str(text), scale)
 
 
 def draw_lap_screen(lap_results, color=WHITE):
@@ -1063,10 +805,7 @@ def draw_lap_screen(lap_results, color=WHITE):
 
 
 def draw_cached_main_screen(lap_results):
-    if lap_results is not None:
-        draw_lap_screen(lap_results, GREEN)
-    else:
-        draw_lap_screen({}, CYAN)
+    draw_lap_screen(lap_results, GREEN)
 
 
 def handle_home_buttons(last_lap_results):
@@ -1074,12 +813,14 @@ def handle_home_buttons(last_lap_results):
 
     if BUTTON_X.read():
         wait_for_release()
+        aggressive_gc()
         show_standings_screen("Latest Driver Standings", fetch_driver_standing_lines)
         draw_cached_main_screen(last_lap_results)
         return True, last_lap_results
 
     if BUTTON_Y.read():
         wait_for_release()
+        aggressive_gc()
         show_standings_screen(
             "Latest Constructors Standings",
             fetch_constructor_standing_lines,
@@ -1091,8 +832,12 @@ def handle_home_buttons(last_lap_results):
     if BUTTON_A.read():
         wait_for_release()
         selection_changed = select_driver_interactive()
-        if selection_changed and last_lap_results is not None:
-            last_lap_results = {dn: last_lap_results.get(dn) for dn in TRACKED_DRIVERS}
+        if selection_changed:
+            refreshed_results = {}
+            for dn in TRACKED_DRIVERS:
+                lap_duration, lap_number, _ = fetch_latest_lap_duration(dn)
+                refreshed_results[dn] = (lap_duration, lap_number)
+            last_lap_results = refreshed_results
         draw_cached_main_screen(last_lap_results)
         return True, last_lap_results
 
@@ -1107,26 +852,12 @@ def handle_home_buttons(last_lap_results):
 
 def connect_wifi(ssid, password, timeout_seconds=20):
     if WIFI_COUNTRY:
-        try:
-            import rp2
-
-            rp2.country(WIFI_COUNTRY)
-        except Exception:
-            pass
+        import rp2
+        rp2.country(WIFI_COUNTRY)
 
     wlan = network.WLAN(network.STA_IF)
-    try:
-        wlan.active(False)
-        time.sleep(0.2)
-    except Exception:
-        pass
-
     wlan.active(True)
-
-    try:
-        wlan.config(pm=0xA11140)  # Disable power save to avoid flaky station links.
-    except Exception:
-        pass
+    wlan.config(pm=0xA11140)  # Disable power save to avoid flaky station links.
 
     status_map = {
         -3: "Wrong password",
@@ -1144,63 +875,43 @@ def connect_wifi(ssid, password, timeout_seconds=20):
         time.sleep(1)
         return wlan
 
-    try:
-        wlan.disconnect()
-    except Exception:
-        pass
-
-    # Pre-scan so we can distinguish "can't see AP" from auth failures.
-    ap_found = False
-    scan_ok = False
-    ap_rssi = None
-    try:
-        draw_lines(["Wi-Fi", "Scanning...", ssid], CYAN)
-        scan_ok = True
-        for ap in wlan.scan():
-            raw_ssid = ap[0]
-            ap_name = raw_ssid.decode("utf-8", "ignore") if isinstance(raw_ssid, bytes) else str(raw_ssid)
-            if ap_name == ssid:
-                ap_found = True
-                ap_rssi = ap[3]
-                break
-    except Exception:
-        # Some firmware builds may fail scan while still allowing connect.
-        pass
-
-    if scan_ok and not ap_found:
-        raise RuntimeError("SSID not found (2.4GHz?)")
+    wlan.disconnect()
 
     wlan.connect(ssid, password)
 
-    def fail_connect(message):
-        # Ensure failed attempts don't finish in the background and confuse
-        # the next retry with an "Already connected" state.
-        try:
-            wlan.disconnect()
-        except Exception:
-            pass
-        raise RuntimeError(message)
-
     start = time.ticks_ms()
     shown_second = -1
+    negative_status = None
+    negative_since_ms = None
+    negative_status_grace_ms = 2000
     while not wlan.isconnected():
         status = wlan.status()
         if status < 0:
-            reason = status_map.get(status, "status {}".format(status))
-            fail_connect("Wi-Fi {}".format(reason))
+            now_ms = time.ticks_ms()
+            if status != negative_status:
+                negative_status = status
+                negative_since_ms = now_ms
+            elif negative_since_ms is not None:
+                if time.ticks_diff(now_ms, negative_since_ms) >= negative_status_grace_ms:
+                    reason = status_map.get(status, "status {}".format(status))
+                    wlan.disconnect()
+                    raise RuntimeError("Wi-Fi {}".format(reason))
+        else:
+            negative_status = None
+            negative_since_ms = None
 
         elapsed = time.ticks_diff(time.ticks_ms(), start) // 1000
         if elapsed != shown_second:
             shown_second = elapsed
-            rssi_text = "rssi {}".format(ap_rssi) if ap_rssi is not None else "rssi ?"
             draw_lines(
-                ["Wi-Fi", "Connecting {}s".format(elapsed), "st {} {}".format(status, rssi_text)],
+                ["Wi-Fi", "Connecting {}s".format(elapsed), "st {}".format(status)],
                 CYAN,
             )
 
         if time.ticks_diff(time.ticks_ms(), start) > timeout_seconds * 1000:
             reason = status_map.get(wlan.status(), "status {}".format(wlan.status()))
-            fail_connect("Timeout ({})".format(reason))
+            wlan.disconnect()
+            raise RuntimeError("Timeout ({})".format(reason))
 
         time.sleep(0.25)
 
@@ -1209,27 +920,7 @@ def connect_wifi(ssid, password, timeout_seconds=20):
     return wlan
 
 
-def lap_from_payload(payload):
-    if isinstance(payload, list):
-        for lap in reversed(payload):
-            if not isinstance(lap, dict):
-                continue
-            lap_duration = lap.get("lap_duration")
-            if lap_duration is not None:
-                return lap_duration, lap.get("lap_number"), lap.get("driver_number")
-        return None, None, None
-
-    if isinstance(payload, dict):
-        lap_duration = payload.get("lap_duration")
-        if lap_duration is not None:
-            return lap_duration, payload.get("lap_number"), payload.get("driver_number")
-
-    return None, None, None
-
-
 def lap_from_tail_json(tail_text):
-    # Walk backwards through object-shaped slices so we can parse without
-    # materializing the full JSON array in memory.
     end = len(tail_text)
     while True:
         end = tail_text.rfind("}", 0, end)
@@ -1238,19 +929,15 @@ def lap_from_tail_json(tail_text):
         start = tail_text.rfind("{", 0, end)
         if start < 0:
             break
-        try:
-            candidate = json.loads(tail_text[start : end + 1])
-        except Exception:
-            end = start
-            continue
-
-        lap_duration, lap_number, dn = lap_from_payload(candidate)
+        candidate = json.loads(tail_text[start : end + 1])
+        lap_duration = candidate["lap_duration"]
         if lap_duration is not None:
-            return lap_duration, lap_number, dn
-
+            lap_number = candidate["lap_number"]
+            driver_number = candidate["driver_number"]
+            return lap_duration, lap_number, driver_number
         end = start
 
-    raise RuntimeError("No lap_duration values yet")
+    raise RuntimeError("No lap_duration rows")
 
 
 def fetch_latest_lap_duration(driver_number):
@@ -1258,18 +945,13 @@ def fetch_latest_lap_duration(driver_number):
     response = None
     gc.collect()
     try:
-        response = urequests.get(url)
+        response = urequests.get(url, stream=True)
         if response.status_code != 200:
             raise RuntimeError("HTTP {}".format(response.status_code))
 
         raw_stream = getattr(response, "raw", None)
         if raw_stream is None:
-            # Fallback for unusual urequests implementations.
-            payload = json.loads(response.text)
-            lap_duration, lap_number, dn = lap_from_payload(payload)
-            if lap_duration is not None:
-                return lap_duration, lap_number, driver_number
-            raise RuntimeError("No lap_duration values yet")
+            raise RuntimeError("No streamed lap response")
 
         tail = bytearray()
         while True:
@@ -1291,25 +973,12 @@ def fetch_latest_lap_duration(driver_number):
         raise RuntimeError("No lap data")
 
     tail_text = tail.decode("utf-8", "ignore")
-    try:
-        payload = json.loads(tail_text)
-    except Exception:
-        payload = None
-
-    if payload is not None:
-        lap_duration, lap_number, dn = lap_from_payload(payload)
-        if lap_duration is not None:
-            return lap_duration, lap_number, driver_number
-
     lap_duration, lap_number, _ = lap_from_tail_json(tail_text)
     return lap_duration, lap_number, driver_number
 
 
 def format_lap_duration(value):
-    try:
-        total_seconds = float(value)
-    except Exception:
-        return str(value)
+    total_seconds = float(value)
 
     minutes = int(total_seconds // 60)
     seconds = int(total_seconds % 60)
@@ -1326,14 +995,7 @@ def format_lap_duration(value):
 
 
 def format_gap_to_leader(duration, leader_duration):
-    if leader_duration is None:
-        return "+--.---"
-
-    duration_seconds = to_float(duration)
-    if duration_seconds is None:
-        return "+--.---"
-
-    gap_seconds = duration_seconds - leader_duration
+    gap_seconds = float(duration) - leader_duration
     sign = "+" if gap_seconds >= 0 else "-"
     gap_seconds = abs(gap_seconds)
 
@@ -1348,12 +1010,7 @@ def format_gap_to_leader(duration, leader_duration):
 
 
 def format_lap_number(value):
-    if value is None:
-        return "lap --"
-    try:
-        return "lap {:02d}".format(int(value))
-    except Exception:
-        return "lap {}".format(value)
+    return "lap {:02d}".format(int(value))
 
 
 def main():
@@ -1366,29 +1023,24 @@ def main():
         while True:
             time.sleep(1)
 
-    wlan = None
-    wifi_attempt = 0
-    while wlan is None:
-        try:
-            wifi_attempt += 1
-            wlan = connect_wifi(WIFI_SSID, WIFI_PASSWORD)
-        except Exception as exc:
-            draw_lines(["Wi-Fi error", "try #{}".format(wifi_attempt), str(exc)], RED)
-            time.sleep(5)
+    wlan = connect_wifi(WIFI_SSID, WIFI_PASSWORD)
 
+    last_lap_results = empty_lap_results()
     try:
         TRACKED_DRIVERS[:] = fetch_top_session_drivers(TRACKED_DRIVER_COUNT)
-    except Exception as exc:
-        TRACKED_DRIVERS[:] = list(DEFAULT_TRACKED_DRIVERS)
-        draw_lines(["Session result error", str(exc)], RED)
-        time.sleep(1.5)
-
-    try:
         fetch_event_and_session_info()
+
+        startup_results = {}
+        for dn in TRACKED_DRIVERS:
+            lap_duration, lap_number, _ = fetch_latest_lap_duration(dn)
+            startup_results[dn] = (lap_duration, lap_number)
+        last_lap_results = startup_results
     except Exception:
         pass
 
-    last_lap_results = None
+    startup_color = GREEN if has_lap_data(last_lap_results) else CYAN
+    draw_lap_screen(last_lap_results, startup_color)
+
     last_event_info = event_info_snapshot()
 
     while True:
@@ -1396,38 +1048,50 @@ def main():
         if handled_button:
             continue
 
-        try:
-            if not wlan.isconnected():
-                wlan = connect_wifi(WIFI_SSID, WIFI_PASSWORD)
-
+        if not wlan.isconnected():
             try:
-                fetch_event_and_session_info()
+                wlan = connect_wifi(WIFI_SSID, WIFI_PASSWORD)
             except Exception:
-                pass
-            current_event_info = event_info_snapshot()
-
-            lap_results = {}
-            skip_fetch_cycle = False
-            for dn in TRACKED_DRIVERS:
-                handled_button, last_lap_results = handle_home_buttons(last_lap_results)
-                if handled_button:
-                    skip_fetch_cycle = True
-                    break
-                try:
-                    lap_duration, lap_number, _ = fetch_latest_lap_duration(dn)
-                    lap_results[dn] = (lap_duration, lap_number)
-                except Exception:
-                    lap_results[dn] = None
-
-            if skip_fetch_cycle:
+                empty_results = empty_lap_results()
+                if empty_results != last_lap_results:
+                    draw_lap_screen(empty_results, CYAN)
+                    last_lap_results = empty_results
+                time.sleep(1)
                 continue
 
+        try:
+            fetch_event_and_session_info()
+            current_event_info = event_info_snapshot()
+        except Exception:
+            current_event_info = last_event_info
+
+        lap_results = {}
+        skip_fetch_cycle = False
+        for dn in TRACKED_DRIVERS:
+            handled_button, last_lap_results = handle_home_buttons(last_lap_results)
+            if handled_button:
+                skip_fetch_cycle = True
+                break
+
+            try:
+                lap_duration, lap_number, _ = fetch_latest_lap_duration(dn)
+                lap_results[dn] = (lap_duration, lap_number)
+            except Exception:
+                lap_results[dn] = (None, None)
+
+        if skip_fetch_cycle:
+            continue
+
+        if has_lap_data(lap_results):
             if lap_results != last_lap_results or current_event_info != last_event_info:
                 draw_lap_screen(lap_results, GREEN)
                 last_lap_results = lap_results
                 last_event_info = current_event_info
-        except Exception as exc:
-            draw_lines(["Fetch error", str(exc)], RED)
+        else:
+            empty_results = empty_lap_results()
+            if empty_results != last_lap_results:
+                draw_lap_screen(empty_results, CYAN)
+                last_lap_results = empty_results
 
         poll_deadline = time.ticks_add(time.ticks_ms(), int(POLL_INTERVAL_SECONDS * 1000))
         while time.ticks_diff(poll_deadline, time.ticks_ms()) > 0:
