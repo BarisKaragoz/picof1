@@ -835,8 +835,11 @@ def handle_home_buttons(last_lap_results):
         if selection_changed:
             refreshed_results = {}
             for dn in TRACKED_DRIVERS:
-                lap_duration, lap_number, _ = fetch_latest_lap_duration(dn)
-                refreshed_results[dn] = (lap_duration, lap_number)
+                try:
+                    lap_duration, lap_number, _ = fetch_latest_lap_duration(dn)
+                    refreshed_results[dn] = (lap_duration, lap_number)
+                except Exception:
+                    refreshed_results[dn] = (None, None)
             last_lap_results = refreshed_results
         draw_cached_main_screen(last_lap_results)
         return True, last_lap_results
