@@ -76,6 +76,19 @@ DRIVER_CODES = {
     87: "BEAR",
 }
 
+CONSTRUCTOR_SHORT_NAME_PAIRS = (
+    ("mclaren", "MCL"),
+    ("ferrari", "FER"),
+    ("red_bull", "RBR"),
+    ("mercedes", "MER"),
+    ("williams", "WIL"),
+    ("aston_martin", "AST"),
+    ("alpine", "ALP"),
+    ("rb", "RBT"),
+    ("haas", "HAA"),
+    ("sauber", "SAU"),
+)
+
 
 DISPLAY_TYPE = getattr(pg, "DISPLAY_PICO_DISPLAY_2", None)
 if DISPLAY_TYPE is None:
@@ -368,6 +381,30 @@ def compact_number_text(value):
     return text
 
 
+def constructor_short_name_from_entry(entry):
+    constructor = entry.get("Constructor")
+    if not isinstance(constructor, dict):
+        return "TEAM"
+
+    raw_constructor_id = constructor.get("constructorId")
+    if raw_constructor_id:
+        if not isinstance(raw_constructor_id, str):
+            raw_constructor_id = str(raw_constructor_id)
+
+        for constructor_id, short_name in CONSTRUCTOR_SHORT_NAME_PAIRS:
+            if raw_constructor_id == constructor_id:
+                return short_name
+
+    raw_name = constructor.get("name")
+    if not raw_name:
+        return "TEAM"
+
+    if not isinstance(raw_name, str):
+        raw_name = str(raw_name)
+
+    return ellipsize(raw_name.upper(), 8)
+
+
 def format_driver_standing_entry(entry, fallback_position):
     if not isinstance(entry, dict):
         return None, fallback_position
@@ -429,14 +466,7 @@ def format_constructor_standing_entry(entry, fallback_position):
         wins = "?"
     wins_text = compact_number_text(wins)
 
-    name = "TEAM"
-    constructor = entry.get("Constructor")
-    if isinstance(constructor, dict):
-        raw_name = constructor.get("name")
-        if raw_name:
-            name = str(raw_name).upper()
-
-    short_name = ellipsize(name, 8)
+    short_name = constructor_short_name_from_entry(entry)
     row = ("P{:02d}".format(position), short_name, points_text, "W{}".format(wins_text))
     return row, position
 
