@@ -13,11 +13,12 @@ Example display line:
 
 - Connects to Wi-Fi with retry and status feedback.
 - On cold boot, fetches top 3 drivers from the session-result endpoint.
-- Polls an API endpoint every 5 seconds.
-- Parses both JSON list and single-object payloads.
-- Uses memory-conscious tail parsing for larger responses.
+- Polls lap data every 5 seconds.
+- Fetches meeting/session metadata every 60 seconds.
+- Fetches driver and constructor championship standings from Jolpica.
+- Uses memory-conscious tail parsing and streamed JSON parsing.
 - Renders driver, lap time, gap-to-leader, and lap number in aligned columns.
-- Displays fetch/network errors without crashing.
+- Shows empty lap placeholders when a driver has no lap data or the API is unavailable.
 - Lets you edit tracked drivers on-device via buttons.
 
 ## Project Layout
@@ -54,19 +55,23 @@ API_BASE_URL = "http://example.com"  # Base URL or IP (no trailing slash needed)
 
 - Lap endpoint: `/v1/laps?session_key=latest`
 - Session-result endpoint: `/v1/session_result?session_key=latest`
+- Meetings endpoint: `/v1/meetings?meeting_key=latest`
+- Sessions endpoint: `/v1/sessions?session_key=latest`
+- Driver standings endpoint: `https://api.jolpi.ca/ergast/f1/2025/last/driverstandings/?format=json`
+- Constructor standings endpoint: `https://api.jolpi.ca/ergast/f1/2025/last/constructorstandings/?format=json`
 
-3. Optional: edit fallback startup drivers in `DEFAULT_TRACKED_DRIVERS`.
+3. Optional: edit initial startup drivers in `INITIAL_TRACKED_DRIVERS`.
 
 Lap endpoint expected fields:
 
-- `lap_duration` (required)
-- `driver_number` (optional, falls back to URL `driver_number`)
-- `lap_number` (optional; shown as `lap --` when missing)
+- `lap_duration` (required, latest non-null value is used)
+- `driver_number` (required)
+- `lap_number` (required key; `null` is shown as `lap --`)
 
 Session-result endpoint expected fields:
 
-- A list payload, or a dict containing a list (for example `results`, `data`, `classification`).
-- Each entry should include a driver number (`driver_number`, `driverNumber`, `number`, or nested `driver`) and preferably a position (`position`, `pos`, `rank`, etc.).
+- A list payload.
+- Each entry must include `driver_number` and `position`.
 
 ## Local Validation
 
@@ -92,29 +97,39 @@ python3 -m py_compile main.py
 4. Upload `main.py` and `secrets.py` to the device root.
 5. Run or reset the device from the extension controls.
 
+## Controls
+
+- Main screen:
+  - `X`: open driver championship standings
+  - `Y`: open constructor championship standings
+  - `A`: open driver selection
+  - `B`: toggle event/session info block
+- Standings screens:
+  - `X`: previous page
+  - `Y`: next page
+  - `A`: go back to the main screen
+- Driver selection:
+  - `X`/`Y`: move up/down
+  - `B`: confirm/select
+  - `A`: cancel and go back to main screen
+
 ## Behavior Notes
 
 - Startup shows `Booting...` and network status.
 - After Wi-Fi connects, startup attempts to load top 3 drivers from `SESSION_RESULT_URL`.
 - Wi-Fi connection is retried until successful.
-- If session-result fetch fails, fallback drivers are used.
-- API or parse errors are shown as `Fetch error` and the loop continues.
-- Main screen button controls:
-  - `A`: open driver selection
-- Driver selection controls:
-  - `X`/`Y`: move up/down
-  - `B`: confirm/select
-  - `A`: cancel and go back to main screen
-- The display updates only when lap values, lap numbers, or tracked drivers change.
+- If startup fetches fail, the app continues with `INITIAL_TRACKED_DRIVERS`.
+- Event/session text (`meeting`, `session`, `circuit`, `country`) refreshes every 60 seconds.
+- Main screen shows placeholders (`--:--.---`, `+--.---`, `lap --`) when no lap data is available.
+- The display updates only when lap values, event/session info, or tracked drivers change.
 
 ## Troubleshooting
 
 - Device has no Wi-Fi: Raspberry Pi Pico (non-W) is not supported for this project.
-- `SSID not found (2.4GHz?)`: Ensure the network is 2.4GHz and in range.
-- `Session result error`: Check `SESSION_RESULT_URL`, server status, and response payload shape.
-- `HTTP <code>`: Check `API_BASE_URL`, server status, and network route from Pico.
-- `No lap_duration values yet`: API response is valid but missing expected data.
-- `No lap data`: Endpoint returned an empty payload.
+- `Wi-Fi Wrong password` / `Wi-Fi AP not found` / `Wi-Fi Connect failed`: verify credentials, Wi-Fi band (2.4GHz), and signal quality.
+- `Timeout (<status>)` during Wi-Fi connect: check AP availability and DHCP/network stability.
+- Standings screens returning `HTTP <code>`: verify internet connectivity and Jolpica API availability.
+- Lap rows are empty: the selected driver may not have recent lap data, or the lap API may be offline/unreachable.
 
 ## Security
 
