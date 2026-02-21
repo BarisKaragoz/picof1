@@ -95,6 +95,7 @@ event_name = ""
 session_type_name = ""
 circuit_short_name = ""
 country_name = ""
+current_season_year = None
 show_event_info = True
 
 BUTTON_A = Button(12)
@@ -112,6 +113,12 @@ CONSTRUCTOR_STANDINGS_NAME_POINTS_GAP = 10
 
 def event_info_snapshot():
     return (event_name, session_type_name, circuit_short_name, country_name)
+
+
+def standings_title_with_current_year(base_title):
+    if current_season_year is not None:
+        return "{} {}".format(base_title, current_season_year)
+    return "{} {}".format(base_title, time.localtime()[0])
 
 
 def format_driver_code(driver_number):
@@ -170,7 +177,7 @@ def fetch_top_session_drivers(limit=TRACKED_DRIVER_COUNT):
 
 
 def fetch_event_and_session_info():
-    global event_name, session_type_name, circuit_short_name, country_name
+    global event_name, session_type_name, circuit_short_name, country_name, current_season_year
     response = None
     gc.collect()
     try:
@@ -178,6 +185,7 @@ def fetch_event_and_session_info():
         if response.status_code != 200:
             raise RuntimeError("HTTP {}".format(response.status_code))
         payload = json.loads(response.text)
+        current_season_year = int(payload[-1]["year"])
         event_name = str(payload[-1]["meeting_name"])
     finally:
         if response is not None:
@@ -815,15 +823,28 @@ def handle_home_buttons(last_lap_results):
     if BUTTON_X.read():
         wait_for_release()
         aggressive_gc()
-        show_standings_screen("Latest Driver Standings", fetch_driver_standing_lines)
+        if current_season_year is None:
+            try:
+                fetch_event_and_session_info()
+            except Exception:
+                pass
+        show_standings_screen(
+            standings_title_with_current_year("Driver Championship"),
+            fetch_driver_standing_lines,
+        )
         draw_cached_main_screen(last_lap_results)
         return True, last_lap_results
 
     if BUTTON_Y.read():
         wait_for_release()
         aggressive_gc()
+        if current_season_year is None:
+            try:
+                fetch_event_and_session_info()
+            except Exception:
+                pass
         show_standings_screen(
-            "Latest Constructors Standings",
+            standings_title_with_current_year("Constructor Championship"),
             fetch_constructor_standing_lines,
             CONSTRUCTOR_STANDINGS_NAME_POINTS_GAP,
         )
