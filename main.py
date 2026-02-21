@@ -28,6 +28,7 @@ CONSTRUCTOR_STANDINGS_URL = (
 )
 
 POLL_INTERVAL_SECONDS = 5
+EVENT_INFO_REFRESH_SECONDS = 60
 STARTUP_DELAY_SECONDS = 1.5
 HTTP_READ_CHUNK_BYTES = 256
 HTTP_TAIL_BYTES = 4096
@@ -1045,6 +1046,8 @@ def main():
     draw_lap_screen(last_lap_results, startup_color)
 
     last_event_info = event_info_snapshot()
+    event_info_refresh_ms = int(EVENT_INFO_REFRESH_SECONDS * 1000)
+    next_event_info_refresh_ms = time.ticks_add(time.ticks_ms(), event_info_refresh_ms)
 
     while True:
         handled_button, last_lap_results = handle_home_buttons(last_lap_results)
@@ -1062,11 +1065,17 @@ def main():
                 time.sleep(1)
                 continue
 
-        try:
-            fetch_event_and_session_info()
-            current_event_info = event_info_snapshot()
-        except Exception:
-            current_event_info = last_event_info
+        current_event_info = last_event_info
+        if time.ticks_diff(time.ticks_ms(), next_event_info_refresh_ms) >= 0:
+            try:
+                fetch_event_and_session_info()
+                current_event_info = event_info_snapshot()
+            except Exception:
+                current_event_info = last_event_info
+            next_event_info_refresh_ms = time.ticks_add(
+                time.ticks_ms(),
+                event_info_refresh_ms,
+            )
 
         lap_results = {}
         skip_fetch_cycle = False
