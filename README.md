@@ -5,7 +5,7 @@ I think transparency is important and I hereby honestly state that this project 
 
 MicroPython app for Raspberry Pi Pico W + Pico Display that connects to Wi-Fi, loads top drivers from session results on cold boot, polls OpenF1 lap-time data, and renders the latest laps on screen.
 
-This project is based on a self-hosted OpenF1-compatible API. A self-hosted implementation is available on GitHub: [br-g/openf1](https://github.com/br-g/openf1). The official OpenF1 API at [openf1.org](https://openf1.org/) requires a subscription for live usage.
+This project is based on a self-hosted version of the OpenF1 API. A self-hosted implementation is available on GitHub: [br-g/openf1](https://github.com/br-g/openf1). The official OpenF1 API at [openf1.org](https://openf1.org/) requires a subscription for live usage.
 
 Example display line:
 
