@@ -3,7 +3,9 @@ I think transparency is important and I hereby honestly state that this project 
 
 # Pico F1 Lap Display
 
-MicroPython app for Raspberry Pi Pico W + Pico Display that connects to Wi-Fi, loads top drivers from session results on cold boot, polls a lap-time API, and renders the latest laps on screen.
+MicroPython app for Raspberry Pi Pico W + Pico Display that connects to Wi-Fi, loads top drivers from session results on cold boot, polls OpenF1 lap-time data, and renders the latest laps on screen.
+
+This project is based on a self-hosted OpenF1-compatible API. A self-hosted implementation is available on GitHub: [br-g/openf1](https://github.com/br-g/openf1). The official OpenF1 API at [openf1.org](https://openf1.org/) requires a subscription for live usage.
 
 Example display line:
 
@@ -13,7 +15,7 @@ Example display line:
 
 - Connects to Wi-Fi with retry and status feedback.
 - On cold boot, fetches top 3 drivers from the session-result endpoint.
-- Polls lap data every 5 seconds.
+- Polls OpenF1 lap data every 5 seconds.
 - Fetches meeting/session metadata every 60 seconds.
 - Fetches driver and constructor championship standings from Jolpica.
 - Uses memory-conscious tail parsing and streamed JSON parsing.
@@ -51,7 +53,9 @@ WIFI_COUNTRY = "US"  # Optional country code
 API_BASE_URL = "http://example.com"  # Base URL or IP (no trailing slash needed)
 ```
 
-2. Endpoints are built automatically from `API_BASE_URL`:
+Use your self-hosted OpenF1-compatible base URL for `API_BASE_URL`.
+
+2. Endpoints are built automatically from `API_BASE_URL` (OpenF1 endpoints):
 
 - Lap endpoint: `/v1/laps?session_key=latest`
 - Session-result endpoint: `/v1/session_result?session_key=latest`
@@ -129,7 +133,7 @@ python3 -m py_compile main.py
 - `Wi-Fi Wrong password` / `Wi-Fi AP not found` / `Wi-Fi Connect failed`: verify credentials, Wi-Fi band (2.4GHz), and signal quality.
 - `Timeout (<status>)` during Wi-Fi connect: check AP availability and DHCP/network stability.
 - Standings screens returning `HTTP <code>`: verify internet connectivity and Jolpica API availability.
-- Lap rows are empty: the selected driver may not have recent lap data, or the lap API may be offline/unreachable.
+- Lap rows are empty: the selected driver may not have recent lap data, or OpenF1 may be offline/unreachable.
 
 ## Security
 
