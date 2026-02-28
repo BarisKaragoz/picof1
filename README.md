@@ -11,6 +11,8 @@ Example display line:
 
 `HAM 01:37.154 +0.000 lap 12`
 
+<img src="https://github.com/user-attachments/assets/9ecc3bc6-f215-4580-aef1-a9e39cf24149" width="400">
+
 ## What It Does
 
 - Connects to Wi-Fi with retry and status feedback.
