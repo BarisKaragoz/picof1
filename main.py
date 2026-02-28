@@ -5,6 +5,7 @@ import network
 import picographics as pg # type: ignore
 from pimoroni import Button  # type: ignore
 import urequests
+import uasyncio
 import ujson as json
 
 
@@ -103,6 +104,9 @@ BUTTON_B = Button(13)
 BUTTON_X = Button(14)
 BUTTON_Y = Button(15)
 
+_button_pressed = None       # 'A'/'B'/'X'/'Y' or None
+_polling_buttons = True      # False during sync sub-screens
+
 ROW_HEIGHT = 28
 VISIBLE_ROWS = (HEIGHT - 12) // ROW_HEIGHT - 1  # minus title row
 MAIN_SCREEN_DRIVER_GAP = 1
@@ -128,6 +132,60 @@ def format_driver_code(driver_number):
 def api_url_for_driver(driver_number):
     return LAPS_BASE_URL + "&driver_number={}".format(driver_number)
 
+
+def _parse_url(url):
+    if url.startswith("https://"):
+        use_ssl = True
+        default_port = 443
+        rest = url[8:]
+    elif url.startswith("http://"):
+        use_ssl = False
+        default_port = 80
+        rest = url[7:]
+    else:
+        raise ValueError("Unsupported URL scheme")
+
+    slash_idx = rest.find("/")
+    if slash_idx < 0:
+        host_part = rest
+        path = "/"
+    else:
+        host_part = rest[:slash_idx]
+        path = rest[slash_idx:]
+
+    colon_idx = host_part.find(":")
+    if colon_idx < 0:
+        host = host_part
+        port = default_port
+    else:
+        host = host_part[:colon_idx]
+        port = int(host_part[colon_idx + 1:])
+
+    return use_ssl, host, port, path
+
+
+async def _async_http_get(url):
+    use_ssl, host, port, path = _parse_url(url)
+
+    if use_ssl:
+        reader, writer = await uasyncio.open_connection(host, port, ssl=True)
+    else:
+        reader, writer = await uasyncio.open_connection(host, port)
+
+    request = "GET {} HTTP/1.0\r\nHost: {}\r\n\r\n".format(path, host)
+    writer.write(request.encode("utf-8"))
+    await writer.drain()
+
+    status_line = await reader.readline()
+    parts = status_line.decode("utf-8").split(" ", 2)
+    status_code = int(parts[1])
+
+    while True:
+        line = await reader.readline()
+        if line == b"\r\n" or line == b"\n" or line == b"":
+            break
+
+    return status_code, reader, writer
 
 
 def top_drivers_from_session_payload(payload, limit=TRACKED_DRIVER_COUNT):
@@ -817,62 +875,84 @@ def draw_cached_main_screen(lap_results):
     draw_lap_screen(lap_results, GREEN)
 
 
-def handle_home_buttons(last_lap_results):
-    global show_event_info
+def _handle_pending_button(last_lap_results):
+    global _button_pressed, _polling_buttons, show_event_info
 
-    if BUTTON_X.read():
-        wait_for_release()
-        aggressive_gc()
-        if current_season_year is None:
-            try:
-                fetch_event_and_session_info()
-            except Exception:
-                pass
-        show_standings_screen(
-            standings_title_with_current_year("Driver Championship"),
-            fetch_driver_standing_lines,
-        )
-        draw_cached_main_screen(last_lap_results)
-        return True, last_lap_results
+    pressed = _button_pressed
+    if pressed is None:
+        return False, last_lap_results
 
-    if BUTTON_Y.read():
-        wait_for_release()
-        aggressive_gc()
-        if current_season_year is None:
-            try:
-                fetch_event_and_session_info()
-            except Exception:
-                pass
-        show_standings_screen(
-            standings_title_with_current_year("Constructor Championship"),
-            fetch_constructor_standing_lines,
-            CONSTRUCTOR_STANDINGS_NAME_POINTS_GAP,
-        )
-        draw_cached_main_screen(last_lap_results)
-        return True, last_lap_results
+    _button_pressed = None
+    _polling_buttons = False
+    wait_for_release()
 
-    if BUTTON_A.read():
-        wait_for_release()
-        selection_changed = select_driver_interactive()
-        if selection_changed:
-            refreshed_results = {}
-            for dn in TRACKED_DRIVERS:
+    try:
+        if pressed == 'X':
+            aggressive_gc()
+            if current_season_year is None:
                 try:
-                    lap_duration, lap_number, _ = fetch_latest_lap_duration(dn)
-                    refreshed_results[dn] = (lap_duration, lap_number)
+                    fetch_event_and_session_info()
                 except Exception:
-                    refreshed_results[dn] = (None, None)
-            last_lap_results = refreshed_results
-        draw_cached_main_screen(last_lap_results)
-        return True, last_lap_results
+                    pass
+            show_standings_screen(
+                standings_title_with_current_year("Driver Championship"),
+                fetch_driver_standing_lines,
+            )
+            draw_cached_main_screen(last_lap_results)
+            return True, last_lap_results
 
-    if BUTTON_B.read():
-        wait_for_release()
-        show_event_info = not show_event_info
-        draw_cached_main_screen(last_lap_results)
-        return True, last_lap_results
+        if pressed == 'Y':
+            aggressive_gc()
+            if current_season_year is None:
+                try:
+                    fetch_event_and_session_info()
+                except Exception:
+                    pass
+            show_standings_screen(
+                standings_title_with_current_year("Constructor Championship"),
+                fetch_constructor_standing_lines,
+                CONSTRUCTOR_STANDINGS_NAME_POINTS_GAP,
+            )
+            draw_cached_main_screen(last_lap_results)
+            return True, last_lap_results
+
+        if pressed == 'A':
+            selection_changed = select_driver_interactive()
+            if selection_changed:
+                refreshed_results = {}
+                for dn in TRACKED_DRIVERS:
+                    try:
+                        lap_duration, lap_number, _ = fetch_latest_lap_duration(dn)
+                        refreshed_results[dn] = (lap_duration, lap_number)
+                    except Exception:
+                        refreshed_results[dn] = (None, None)
+                last_lap_results = refreshed_results
+            draw_cached_main_screen(last_lap_results)
+            return True, last_lap_results
+
+        if pressed == 'B':
+            show_event_info = not show_event_info
+            draw_cached_main_screen(last_lap_results)
+            return True, last_lap_results
+    finally:
+        _polling_buttons = True
 
     return False, last_lap_results
+
+
+async def _check_buttons_task():
+    global _button_pressed
+    while True:
+        if _polling_buttons and _button_pressed is None:
+            if BUTTON_A.read():
+                _button_pressed = 'A'
+            elif BUTTON_B.read():
+                _button_pressed = 'B'
+            elif BUTTON_X.read():
+                _button_pressed = 'X'
+            elif BUTTON_Y.read():
+                _button_pressed = 'Y'
+        await uasyncio.sleep_ms(20)
 
 
 def connect_wifi(ssid, password, timeout_seconds=20):
@@ -1002,6 +1082,84 @@ def fetch_latest_lap_duration(driver_number):
     return lap_duration, lap_number, driver_number
 
 
+async def async_fetch_latest_lap_duration(driver_number):
+    url = api_url_for_driver(driver_number)
+    gc.collect()
+    status, reader, writer = await _async_http_get(url)
+    try:
+        if status != 200:
+            raise RuntimeError("HTTP {}".format(status))
+
+        tail = bytearray()
+        while True:
+            chunk = await reader.read(HTTP_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            if not isinstance(chunk, (bytes, bytearray)):
+                chunk = str(chunk).encode("utf-8")
+            tail.extend(chunk)
+            if len(tail) > HTTP_TAIL_BYTES:
+                overflow = len(tail) - HTTP_TAIL_BYTES
+                tail = tail[overflow:]
+    finally:
+        writer.close()
+        gc.collect()
+
+    if not tail:
+        raise RuntimeError("No lap data")
+
+    tail_text = tail.decode("utf-8", "ignore")
+    lap_duration, lap_number, _ = lap_from_tail_json(tail_text)
+    return lap_duration, lap_number, driver_number
+
+
+async def async_fetch_event_and_session_info():
+    global event_name, session_type_name, circuit_short_name, country_name, current_season_year
+    gc.collect()
+
+    status, reader, writer = await _async_http_get(MEETINGS_URL)
+    try:
+        if status != 200:
+            raise RuntimeError("HTTP {}".format(status))
+        body = bytearray()
+        while True:
+            chunk = await reader.read(HTTP_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            body.extend(chunk)
+    finally:
+        writer.close()
+        gc.collect()
+
+    payload = json.loads(body.decode("utf-8", "ignore"))
+    current_season_year = int(payload[-1]["year"])
+    event_name = str(payload[-1]["meeting_name"])
+    body = None
+    gc.collect()
+
+    status, reader, writer = await _async_http_get(SESSIONS_URL)
+    try:
+        if status != 200:
+            raise RuntimeError("HTTP {}".format(status))
+        body = bytearray()
+        while True:
+            chunk = await reader.read(HTTP_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            body.extend(chunk)
+    finally:
+        writer.close()
+        gc.collect()
+
+    payload = json.loads(body.decode("utf-8", "ignore"))
+    session = payload[-1]
+    st = str(session["session_type"])
+    sn = str(session["session_name"])
+    session_type_name = "{} - {}".format(st, sn)
+    circuit_short_name = str(session["circuit_short_name"])
+    country_name = str(session["country_name"])
+
+
 def format_lap_duration(value):
     total_seconds = float(value)
 
@@ -1038,7 +1196,7 @@ def format_lap_number(value):
     return "lap {:02d}".format(int(value))
 
 
-def main():
+async def async_main():
     global show_event_info
     draw_lines(["Booting...", "Starting network"], CYAN)
     time.sleep(STARTUP_DELAY_SECONDS)
@@ -1070,9 +1228,12 @@ def main():
     event_info_refresh_ms = int(EVENT_INFO_REFRESH_SECONDS * 1000)
     next_event_info_refresh_ms = time.ticks_add(time.ticks_ms(), event_info_refresh_ms)
 
+    uasyncio.create_task(_check_buttons_task())
+
     while True:
-        handled_button, last_lap_results = handle_home_buttons(last_lap_results)
+        handled_button, last_lap_results = _handle_pending_button(last_lap_results)
         if handled_button:
+            await uasyncio.sleep_ms(20)
             continue
 
         if not wlan.isconnected():
@@ -1083,13 +1244,13 @@ def main():
                 if empty_results != last_lap_results:
                     draw_lap_screen(empty_results, CYAN)
                     last_lap_results = empty_results
-                time.sleep(1)
+                await uasyncio.sleep(1)
                 continue
 
         current_event_info = last_event_info
         if time.ticks_diff(time.ticks_ms(), next_event_info_refresh_ms) >= 0:
             try:
-                fetch_event_and_session_info()
+                await async_fetch_event_and_session_info()
                 current_event_info = event_info_snapshot()
             except Exception:
                 current_event_info = last_event_info
@@ -1101,13 +1262,13 @@ def main():
         lap_results = {}
         skip_fetch_cycle = False
         for dn in TRACKED_DRIVERS:
-            handled_button, last_lap_results = handle_home_buttons(last_lap_results)
+            handled_button, last_lap_results = _handle_pending_button(last_lap_results)
             if handled_button:
                 skip_fetch_cycle = True
                 break
 
             try:
-                lap_duration, lap_number, _ = fetch_latest_lap_duration(dn)
+                lap_duration, lap_number, _ = await async_fetch_latest_lap_duration(dn)
                 lap_results[dn] = (lap_duration, lap_number)
             except Exception:
                 lap_results[dn] = (None, None)
@@ -1128,13 +1289,11 @@ def main():
 
         poll_deadline = time.ticks_add(time.ticks_ms(), int(POLL_INTERVAL_SECONDS * 1000))
         while time.ticks_diff(poll_deadline, time.ticks_ms()) > 0:
-            handled_button, last_lap_results = handle_home_buttons(last_lap_results)
+            handled_button, last_lap_results = _handle_pending_button(last_lap_results)
             if handled_button:
-                # Keep the home screen interactive for a full poll interval
-                # after handling a button.
                 poll_deadline = time.ticks_add(time.ticks_ms(), int(POLL_INTERVAL_SECONDS * 1000))
                 continue
-            time.sleep(BUTTON_POLL_SECONDS)
+            await uasyncio.sleep_ms(20)
 
 
-main()
+uasyncio.run(async_main())
