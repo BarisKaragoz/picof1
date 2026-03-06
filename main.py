@@ -258,9 +258,8 @@ def fetch_event_and_session_info():
             raise RuntimeError("HTTP {}".format(response.status_code))
         payload = json.loads(response.text)
         session = payload[-1]
-        st = str(session["session_type"])
         sn = str(session["session_name"])
-        session_type_name = "{} - {}".format(st, sn)
+        session_type_name = sn
         circuit_short_name = str(session["circuit_short_name"])
         country_name = str(session["country_name"])
     finally:
@@ -1153,9 +1152,8 @@ async def async_fetch_event_and_session_info():
 
     payload = json.loads(body.decode("utf-8", "ignore"))
     session = payload[-1]
-    st = str(session["session_type"])
     sn = str(session["session_name"])
-    session_type_name = "{} - {}".format(st, sn)
+    session_type_name = sn
     circuit_short_name = str(session["circuit_short_name"])
     country_name = str(session["country_name"])
 
