@@ -22,10 +22,10 @@ SESSION_RESULT_URL = BASE_URL + "/v1/session_result?session_key=latest"
 MEETINGS_URL = BASE_URL + "/v1/meetings?meeting_key=latest"
 SESSIONS_URL = BASE_URL + "/v1/sessions?session_key=latest"
 DRIVER_STANDINGS_URL = (
-    "https://api.jolpi.ca/ergast/f1/2025/last/driverstandings/?format=json"
+    "https://api.jolpi.ca/ergast/f1/current/last/driverstandings/?format=json"
 )
 CONSTRUCTOR_STANDINGS_URL = (
-    "https://api.jolpi.ca/ergast/f1/2025/last/constructorstandings/?format=json"
+    "https://api.jolpi.ca/ergast/f1/current/last/constructorstandings/?format=json"
 )
 
 POLL_INTERVAL_SECONDS = 5
