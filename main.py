@@ -35,6 +35,7 @@ HTTP_READ_CHUNK_BYTES = 256
 HTTP_TAIL_BYTES = 4096
 STANDINGS_READ_CHUNK_BYTES = 128
 STANDINGS_ENTRY_LIMIT = 0
+STANDINGS_REQUEST_HEADERS = {"Connection": "close"}
 DISPLAY_BRIGHTNESS = 0.4
 BUTTON_POLL_SECONDS = 0.02
 BUTTON_RELEASE_POLL_SECONDS = 0.01
@@ -437,7 +438,7 @@ def fetch_standing_rows(url, entry_key, format_fn, limit=STANDINGS_ENTRY_LIMIT):
     response = None
     aggressive_gc()
     try:
-        response = urequests.get(url, stream=True)
+        response = urequests.get(url, headers=STANDINGS_REQUEST_HEADERS, stream=True)
         if response.status_code != 200:
             raise RuntimeError("HTTP {}".format(response.status_code))
 
