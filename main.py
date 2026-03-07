@@ -113,6 +113,7 @@ MAIN_SCREEN_DRIVER_GAP = 1
 STANDINGS_POS_NAME_GAP = 12
 STANDINGS_NAME_POINTS_GAP = 6
 CONSTRUCTOR_STANDINGS_NAME_POINTS_GAP = 10
+NO_STANDINGS_MESSAGE = "No standings available"
 
 
 def event_info_snapshot():
@@ -585,6 +586,8 @@ def page_scroll_start(current_start, count, page_size, direction):
 
 
 def show_scrollable_lines(title, lines):
+    display.set_font("bitmap8")
+
     count = len(lines)
     page_size = max(1, VISIBLE_ROWS)
     window_start = 0
@@ -727,8 +730,19 @@ def show_scrollable_standings_rows(title, rows, name_points_gap=STANDINGS_NAME_P
 def show_standings_screen(title, fetch_lines_fn, name_points_gap=STANDINGS_NAME_POINTS_GAP):
     draw_lines([title, "Loading..."], CYAN)
     gc.collect()
-    rows_or_lines = fetch_lines_fn()
+    try:
+        rows_or_lines = fetch_lines_fn()
+    except RuntimeError as exc:
+        gc.collect()
+        if str(exc) != "No standings data":
+            raise
+        show_scrollable_lines(title, [NO_STANDINGS_MESSAGE])
+        return
     gc.collect()
+
+    if not rows_or_lines:
+        show_scrollable_lines(title, [NO_STANDINGS_MESSAGE])
+        return
 
     show_scrollable_standings_rows(title, rows_or_lines, name_points_gap)
 
