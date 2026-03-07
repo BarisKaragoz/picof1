@@ -120,6 +120,16 @@ def event_info_snapshot():
     return (event_name, session_type_name, circuit_short_name, country_name)
 
 
+def event_info_is_complete():
+    return (
+        current_season_year is not None and
+        bool(event_name) and
+        bool(session_type_name) and
+        bool(circuit_short_name) and
+        bool(country_name)
+    )
+
+
 def standings_title_with_current_year(base_title):
     if current_season_year is not None:
         return "{} {}".format(base_title, current_season_year)
@@ -1223,8 +1233,15 @@ async def async_main():
     last_lap_results = empty_lap_results()
     try:
         TRACKED_DRIVERS[:] = fetch_top_session_drivers(TRACKED_DRIVER_COUNT)
-        fetch_event_and_session_info()
+    except Exception:
+        pass
 
+    try:
+        fetch_event_and_session_info()
+    except Exception:
+        pass
+
+    try:
         startup_results = {}
         for dn in TRACKED_DRIVERS:
             lap_duration, lap_number, _ = fetch_latest_lap_duration(dn)
@@ -1238,7 +1255,10 @@ async def async_main():
 
     last_event_info = event_info_snapshot()
     event_info_refresh_ms = int(EVENT_INFO_REFRESH_SECONDS * 1000)
-    next_event_info_refresh_ms = time.ticks_add(time.ticks_ms(), event_info_refresh_ms)
+    if event_info_is_complete():
+        next_event_info_refresh_ms = time.ticks_add(time.ticks_ms(), event_info_refresh_ms)
+    else:
+        next_event_info_refresh_ms = time.ticks_ms()
 
     uasyncio.create_task(_check_buttons_task())
 
@@ -1295,9 +1315,10 @@ async def async_main():
                 last_event_info = current_event_info
         else:
             empty_results = empty_lap_results()
-            if empty_results != last_lap_results:
+            if empty_results != last_lap_results or current_event_info != last_event_info:
                 draw_lap_screen(empty_results, CYAN)
                 last_lap_results = empty_results
+                last_event_info = current_event_info
 
         poll_deadline = time.ticks_add(time.ticks_ms(), int(POLL_INTERVAL_SECONDS * 1000))
         while time.ticks_diff(poll_deadline, time.ticks_ms()) > 0:
