@@ -306,6 +306,26 @@ def compact_number_text(value):
     return text
 
 
+def standing_position_row(entry):
+    raw_position = entry.get("position")
+    if raw_position is not None:
+        try:
+            position = int(raw_position)
+            return position, "P{:02d}".format(position)
+        except (TypeError, ValueError):
+            pass
+
+    raw_position_text = entry.get("positionText")
+    if raw_position_text is not None:
+        try:
+            position = int(raw_position_text)
+            return position, "P{:02d}".format(position)
+        except (TypeError, ValueError):
+            pass
+
+    return 9999, "P--"
+
+
 def constructor_short_name_from_entry(entry):
     raw_constructor_id = str(entry["Constructor"]["constructorId"])
     for constructor_id, short_name in CONSTRUCTOR_SHORT_NAME_PAIRS:
@@ -316,21 +336,39 @@ def constructor_short_name_from_entry(entry):
     return ellipsize(raw_name.upper(), 8)
 
 
+def driver_short_name_from_entry(entry):
+    driver = entry.get("Driver", {})
+    code = driver.get("code")
+    if code:
+        return str(code).upper()
+
+    family_name = driver.get("familyName")
+    if family_name:
+        return ellipsize(str(family_name).upper(), 3)
+
+    driver_id = driver.get("driverId")
+    if driver_id:
+        compact_id = str(driver_id).replace("_", "")
+        return ellipsize(compact_id.upper(), 3)
+
+    return "---"
+
+
 def format_driver_standing_entry(entry):
-    position = int(entry["position"])
+    position, position_text = standing_position_row(entry)
     points_text = compact_number_text(entry["points"])
     wins_text = compact_number_text(entry["wins"])
-    code = str(entry["Driver"]["code"]).upper()
-    row = ("P{:02d}".format(position), code, points_text, "W{}".format(wins_text))
+    code = driver_short_name_from_entry(entry)
+    row = (position_text, code, points_text, "W{}".format(wins_text))
     return row, position
 
 
 def format_constructor_standing_entry(entry):
-    position = int(entry["position"])
+    position, position_text = standing_position_row(entry)
     points_text = compact_number_text(entry["points"])
     wins_text = compact_number_text(entry["wins"])
     short_name = constructor_short_name_from_entry(entry)
-    row = ("P{:02d}".format(position), short_name, points_text, "W{}".format(wins_text))
+    row = (position_text, short_name, points_text, "W{}".format(wins_text))
     return row, position
 
 
@@ -346,12 +384,18 @@ def standings_rows_from_stream(raw_stream, entry_key, format_fn, limit=STANDINGS
     object_bytes = bytearray()
 
     ranked = []
+    object_index = 0
     def finalize_object():
-        nonlocal object_bytes, ranked
+        nonlocal object_bytes, ranked, object_index
         entry = json.loads(object_bytes.decode("utf-8"))
-        row, position = format_fn(entry)
+        try:
+            row, position = format_fn(entry)
+        except (KeyError, TypeError, ValueError):
+            object_bytes = bytearray()
+            return
         object_bytes = bytearray()
-        ranked.append((position, row))
+        ranked.append((position, object_index, row))
+        object_index += 1
         if limit > 0 and len(ranked) > limit:
             ranked.sort()
             del ranked[limit:]
@@ -429,14 +473,14 @@ def standings_rows_from_stream(raw_stream, entry_key, format_fn, limit=STANDINGS
                 ranked.sort()
                 if limit > 0:
                     ranked = ranked[:limit]
-                return [row for _position, row in ranked]
+                return [row for _position, _idx, row in ranked]
 
     if not ranked:
         raise RuntimeError("No standings data")
     ranked.sort()
     if limit > 0:
         ranked = ranked[:limit]
-    return [row for _position, row in ranked]
+    return [row for _position, _idx, row in ranked]
 
 
 def aggressive_gc():
