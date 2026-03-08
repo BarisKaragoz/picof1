@@ -201,17 +201,27 @@ async def _async_http_get(url):
 
 
 def top_drivers_from_session_payload(payload, limit=TRACKED_DRIVER_COUNT):
-    if not isinstance(payload, list):
+    if isinstance(payload, dict):
+        entries = [payload]
+    elif isinstance(payload, list):
+        entries = payload
+    else:
         raise RuntimeError("Bad session_result payload")
 
-    entries = payload
     ranked = []
 
     for idx, entry in enumerate(entries):
         if not isinstance(entry, dict):
             continue
-        driver_number = int(entry["driver_number"])
-        position = int(entry["position"])
+        driver_number = entry.get("driver_number")
+        position = entry.get("position")
+        if driver_number is None or position is None:
+            continue
+        try:
+            driver_number = int(driver_number)
+            position = int(position)
+        except (TypeError, ValueError):
+            continue
         ranked.append((position, idx, driver_number))
 
     if not ranked:
